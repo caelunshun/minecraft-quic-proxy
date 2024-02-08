@@ -1,0 +1,24 @@
+workspace = { members = [".", "macros"] }
+
+[package]
+name = "minecraft-quic-proxy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aes = "0.8"
+ahash = "0.8"
+anyhow = "1"
+bitflags = "2"
+bytemuck = "1"
+bytes = "1"
+cfb8 = "0.8"
+flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
+fs-err = "2"
+minecraft-quic-proxy-macros = { path = "macros" }
+once_cell = "1"
+quinn = { version = "0.10", default-features = false, features = ["tls-rustls", "runtime-tokio"] }
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+zstd = { version = "0.13", features = ["experimental"] }
