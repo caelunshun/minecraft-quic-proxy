@@ -1,0 +1,169 @@
+//! # QUIC stream allocation
+//! The benefit of QUIC over TCP comes from the fact that data sent on separate streams
+//! is not required to be received in order, thus reducing head-of-line blocking.
+//! It would be valid for the proxy to transmit all packets over the same stream, but this
+//! would accomplish nothing compared to TCP.
+//!
+//! When allocating packets to streams, care must be taken to ensure data that must
+//! be received in order is guaranteed to be received in that order. Thus, sequentially related
+//! packets must be transmitted on the same stream.
+//!
+//! The proxy will make the following choices regarding stream allocation. Note that
+//! all opened streams are unidirectional.
+//!
+//! - During the Handshake, Status, Login, and Configuration stages of the connection, all
+//!  packets are sent on the same stream.
+//! - During the Play state:
+//!   - All entity movement packets (including players) are sent as unreliable datagrams and tagged
+//!      with an ordinal. Only a packet that has a greater ordinal than all previously received datagrams
+//!      associated with that entity is used. Older datagrams are dropped.
+//!   - Other packets sent for specific entities are sent on a stream belonging to that entity.
+//!   - Packets updating blocks or chunks are sent on a stream belonging to that chunk.
+//!   - Packets pertaining to chat use the chat stream.
+//!   - The following packets use a new stream for each packet (i.e., reliable unordered):
+//!       - Keepalives
+//!       - Ping/pong
+//!   - All other packets use the shared "miscellaneous" stream.
+
+use crate::{
+    entity_id::EntityId,
+    position::ChunkPosition,
+    protocol::{
+        optimized_codec::OptimizedCodec,
+        packet,
+        packet::{
+            client, server, side,
+            side::{Client, Server},
+            state,
+        },
+    },
+};
+use mini_moka::unsync::Cache;
+use quinn::{Connection, SendStream};
+use std::time::Duration;
+use crate::sequence::SequenceKey;
+
+/// An open stream used during the "Play" state.
+///
+/// This combines a `quinn::SendStream` with the codec
+/// state used to delimit packets.
+pub struct StreamWrapper<Side> {
+    stream: SendStream,
+    codec: OptimizedCodec<Side, state::Play>,
+}
+
+impl<Side> StreamWrapper<Side>
+where
+    Side: packet::Side,
+{
+    /// Opens a new stream.
+    pub async fn open(connection: &Connection) -> anyhow::Result<Self> {
+        let stream = connection.open_uni().await?;
+        Ok(Self {
+            stream,
+            codec: OptimizedCodec::new(),
+        })
+    }
+
+    /// Sends a packet on this stream.
+    pub async fn send(&mut self, packet: &Side::SendPacket<state::Play>) -> anyhow::Result<()> {
+        let bytes = self.codec.encode_packet(packet)?;
+        self.stream.write_all(&bytes).await?;
+        Ok(())
+    }
+}
+
+/// Tells the proxy how to transmit a packet.
+pub enum Allocation<'a, Side> {
+    /// The packet will be sent on the given stream
+    /// (reliable, ordered only with respect to that stream)
+    Stream(&'a mut StreamWrapper<Side>),
+    /// The packet should be sent as an unreliable datagram
+    /// on the connection, with an ordinal allocated from
+    /// the given sequence.
+    /// (unreliable, unordered)
+    Sequence(SequenceKey),
+}
+
+/// Stores all QUIC streams used for _transmitting_ packets on a connection.
+///
+/// Note that this is only used during the Play connection state. During the login/setup states,
+/// all packets are simply sent on the same stream.
+///
+/// The `Side` generic parameter will be `Client` when used on the client,
+/// and `Server` when used on the gateway.
+///
+/// # Implementation details
+/// Some streams are keyed according to some sort of game identifier
+/// (e.g., entity ID or chunk position). These streams can become stale
+/// after their game entities are no longer alive / in sight.
+///
+/// To avoid a memory leak, streams can be automatically dropped
+/// after being unused for `STREAM_IDLE_DURATION`. Technically,
+/// this allows packets on the same logical stream to be received
+/// out of order (if the stream corresponding to that entity was re-created
+/// after the old one was dropped), but such situations are extremely
+/// rare for sufficiently high idle duration.
+pub struct StreamAllocator<Side> {
+    connection: Connection,
+
+    entity_streams: Cache<EntityId, StreamWrapper<Side>>,
+    chunk_streams: Cache<ChunkPosition, StreamWrapper<Side>>,
+
+    chat_stream: StreamWrapper<Side>,
+    misc_stream: StreamWrapper<Side>,
+}
+
+/// Minimum duration a stream must be kept with no activity.
+pub const STREAM_IDLE_DURATION: Duration = Duration::from_secs(90);
+
+impl<Side> StreamAllocator<Side>
+where
+    Side: packet::Side,
+{
+    pub async fn new(connection: &Connection) -> anyhow::Result<Self> {
+        let chat_stream = StreamWrapper::open(connection).await?;
+        let misc_stream = StreamWrapper::open(connection).await?;
+
+        let entity_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
+        let chunk_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
+
+        Ok(Self {
+            connection: connection.clone(),
+            entity_streams,
+            chunk_streams,
+            chat_stream,
+            misc_stream,
+        })
+    }
+}
+
+/// `StreamAllocator` implements this for both `Side = Client` and `Side = Server`
+/// (the only two `Side` implementors).
+pub trait AllocateStream<Side: packet::Side + 'static> {
+    /// Allocates a stream for the given packet.
+    async fn allocate_stream_for(
+        &mut self,
+        packet: &Side::SendPacket<state::Play>,
+    ) -> anyhow::Result<Allocation<Side>>;
+}
+
+impl AllocateStream<side::Client> for StreamAllocator<side::Client> {
+    async fn allocate_stream_for(
+        &mut self,
+        _packet: &client::play::Packet,
+    ) -> anyhow::Result<Allocation<Client>> {
+        // TODO
+        Ok(Allocation::Stream(&mut self.misc_stream))
+    }
+}
+
+impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
+    async fn allocate_stream_for(
+        &mut self,
+        _packet: &server::play::Packet,
+    ) -> anyhow::Result<Allocation<Server>> {
+        // TODO
+        Ok(Allocation::Stream(&mut self.misc_stream))
+    }
+}

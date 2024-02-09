@@ -14,7 +14,8 @@
 //! * use a pre-trained dictionary for better compression
 
 use crate::protocol::{
-    packet, packet::ProtocolState, Decode, Decoder, Encode, Encoder, BUFFER_LIMIT,
+    packet, packet::ProtocolState, vanilla_codec::var_int_size, Decode, Decoder, Encode, Encoder,
+    BUFFER_LIMIT,
 };
 use anyhow::{bail, Context};
 use bitflags::bitflags;
@@ -114,6 +115,8 @@ where
             bail!("packet length of {length} is too large");
         }
 
+        let total_bytes_read = var_int_size(length as i32) + length;
+
         let remaining_data = decoder.buffer();
         if remaining_data.len() < length {
             return Ok(None);
@@ -122,7 +125,7 @@ where
 
         let mut decoder = Decoder::new(data);
         let flags = Flags::from_bits(decoder.read_u8()?).context("invalid flags")?;
-        if flags.contains(Flags::COMPRESSED) {
+        let result = if flags.contains(Flags::COMPRESSED) {
             let decompressed = self
                 .decompressor
                 .decompress(decoder.buffer(), BUFFER_LIMIT)?;
@@ -131,6 +134,9 @@ where
         } else {
             let packet = Side::RecvPacket::<State>::decode(&mut decoder)?;
             Ok(Some(packet))
-        }
+        };
+
+        self.read_buffer.drain(..total_bytes_read);
+        result
     }
 }

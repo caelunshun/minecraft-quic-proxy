@@ -1,6 +1,7 @@
 //! Codec implementation for the vanilla codec.
 //! Supports zlib compression and CFB8 encryption.
 
+use super::BUFFER_LIMIT;
 use crate::protocol::{
     packet, packet::ProtocolState, Decode, DecodeError, Decoder, Encode, Encoder,
 };
@@ -15,7 +16,6 @@ use std::{
     num::NonZeroUsize,
     slice,
 };
-use super::BUFFER_LIMIT;
 
 /// Since the proxy will rarely sent large amounts of compressed data
 /// over the vanilla codec, we avoid spending too much time on compression here.
@@ -214,6 +214,6 @@ struct CompressionState {
     threshold: CompressionThreshold,
 }
 
-fn var_int_size(x: i32) -> usize {
+pub fn var_int_size(x: i32) -> usize {
     Encoder::new(&mut Vec::new()).write_var_int(x)
 }

@@ -1,10 +1,12 @@
+//! Implements the Minecraft protocol.
+
 pub const PROTOCOL_VERSION: i32 = 765; // 1.20.4
 
-mod decoder;
-mod encoder;
-mod packet;
-mod optimized_codec;
-mod vanilla_codec;
+pub mod decoder;
+pub mod encoder;
+pub mod optimized_codec;
+pub mod packet;
+pub mod vanilla_codec;
 
 pub use decoder::{Decode, DecodeError, Decoder};
 pub use encoder::{Encode, Encoder};
