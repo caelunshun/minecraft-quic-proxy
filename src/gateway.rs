@@ -107,12 +107,13 @@ async fn configure_connection(
                         },
                         |server_packet| {
                             if let server::login::Packet::SetCompression(packet) = server_packet {
-                                ControlFlow::Break(Status::EnableCompression(
-                                    CompressionThreshold::new(packet.threshold as usize),
-                                ))
-                            } else {
-                                ControlFlow::Continue(())
+                                if let Ok(threshold) = usize::try_from(packet.threshold) {
+                                    return ControlFlow::Break(Status::EnableCompression(
+                                        CompressionThreshold::new(packet.threshold as usize),
+                                    ));
+                                }
                             }
+                            ControlFlow::Continue(())
                         },
                     )
                     .await?;

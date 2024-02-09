@@ -36,7 +36,7 @@ pub struct LoginSuccess {
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SetCompression {
     #[encoding(varint)]
-    pub threshold: u32,
+    pub threshold: i32,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
