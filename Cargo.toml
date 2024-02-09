@@ -15,6 +15,7 @@ bytemuck = "1"
 bytes = "1"
 cfb8 = "0.8"
 flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
+flume = "0.11"
 fs-err = "2"
 futures = "0.3"
 minecraft-quic-proxy-macros = { path = "macros" }

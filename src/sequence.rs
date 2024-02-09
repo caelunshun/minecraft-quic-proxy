@@ -3,11 +3,25 @@ use crate::{
     position::ChunkPosition,
     protocol::{packet, packet::state, Decode, Decoder, Encode, Encoder},
 };
+use anyhow::Context;
 use bincode::Options;
 use mini_moka::unsync::Cache;
 use quinn::Connection;
 use serde::{Deserialize, Serialize};
-use std::{cell::Cell, marker::PhantomData, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    marker::PhantomData,
+    rc::Rc,
+    thread,
+    time::Duration,
+};
+use tokio::{sync::oneshot, task::LocalSet};
+
+type SendPacket<Side> = (
+    SequenceKey,
+    <Side as packet::Side>::SendPacket<state::Play>,
+    oneshot::Sender<anyhow::Result<()>>,
+);
 
 /// Manages sending and receiving sequenced datagrams.
 /// Sequenced datagrams are associated with a particular
@@ -21,15 +35,94 @@ use std::{cell::Cell, marker::PhantomData, rc::Rc, time::Duration};
 /// than the previously received packet, it is ignored.
 ///
 /// This allows only the newest received packet to be considered.
-pub struct Sequences<Side> {
-    connection: Connection,
-    sequences: Cache<SequenceKey, Rc<Sequence>>,
-    _marker: PhantomData<Side>,
+#[derive(Clone)]
+pub struct SequencesHandle<Side: packet::Side> {
+    sender: flume::Sender<SendPacket<Side>>,
+    receiver: flume::Receiver<anyhow::Result<Side::RecvPacket<state::Play>>>,
 }
 
 /// Idle duration after which the state for a certain sequence
 /// is dropped to conserve memory.
 const SEQUENCE_IDLE_DURATION: Duration = Duration::from_secs(120);
+
+impl<Side> SequencesHandle<Side>
+where
+    Side: packet::Side,
+{
+    pub fn new(connection: Connection) -> Self {
+        let (packets_inbound_tx, packets_inbound_rx) = flume::bounded(16);
+        let (packets_outbound_tx, packets_outbound_rx) = flume::bounded::<SendPacket<Side>>(16);
+
+        let runtime = tokio::runtime::Handle::current();
+        thread::spawn(move || {
+            let local_set = LocalSet::new();
+            let sequences = Rc::new(Sequences::<Side>::new(connection));
+
+            local_set.spawn_local({
+                let sequences = Rc::clone(&sequences);
+                async move {
+                    loop {
+                        match sequences.recv_packet().await {
+                            Ok(packet) => {
+                                if packets_inbound_tx.send_async(Ok(packet)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                packets_inbound_tx.send_async(Err(e)).await.ok();
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+            local_set.spawn_local(async move {
+                while let Ok((sequence_key, packet, completion)) =
+                    packets_outbound_rx.recv_async().await
+                {
+                    let result = sequences.send_packet(sequence_key, packet).await;
+                    let is_error = result.is_err();
+                    completion.send(result).ok();
+                    if is_error {
+                        break;
+                    }
+                }
+            });
+
+            runtime.block_on(local_set);
+        });
+
+        Self {
+            sender: packets_outbound_tx,
+            receiver: packets_inbound_rx,
+        }
+    }
+
+    pub async fn send_packet(
+        &self,
+        sequence_key: SequenceKey,
+        packet: Side::SendPacket<state::Play>,
+    ) -> anyhow::Result<()> {
+        let (completion_tx, completion_rx) = oneshot::channel();
+        self.sender
+            .send_async((sequence_key, packet, completion_tx))
+            .await
+            .ok()
+            .context("disconnected")?;
+        completion_rx.await.context("disconnected")??;
+        Ok(())
+    }
+
+    pub async fn recv_packet(&self) -> anyhow::Result<Side::RecvPacket<state::Play>> {
+        self.receiver.recv_async().await.context("disconnected")?
+    }
+}
+
+struct Sequences<Side> {
+    connection: Connection,
+    sequences: RefCell<Cache<SequenceKey, Rc<Sequence>>>,
+    _marker: PhantomData<Side>,
+}
 
 impl<Side> Sequences<Side>
 where
@@ -38,16 +131,18 @@ where
     pub fn new(connection: Connection) -> Self {
         Self {
             connection,
-            sequences: Cache::builder()
-                .time_to_idle(SEQUENCE_IDLE_DURATION)
-                .build(),
+            sequences: RefCell::new(
+                Cache::builder()
+                    .time_to_idle(SEQUENCE_IDLE_DURATION)
+                    .build(),
+            ),
             _marker: PhantomData,
         }
     }
 
     /// Sends a packet on the given sequence.
     pub async fn send_packet(
-        &mut self,
+        &self,
         sequence_key: SequenceKey,
         packet: Side::SendPacket<state::Play>,
     ) -> anyhow::Result<()> {
@@ -66,7 +161,7 @@ where
 
     /// Waits for the next datagram.
     /// Ignores any out-of-date packets, as per the sequence logic.
-    pub async fn recv_packet(&mut self) -> anyhow::Result<Side::RecvPacket<state::Play>> {
+    pub async fn recv_packet(&self) -> anyhow::Result<Side::RecvPacket<state::Play>> {
         loop {
             let datagram = self.connection.read_datagram().await?;
             let (header, packet) = self.decode_packet(&datagram)?;
@@ -77,19 +172,20 @@ where
         }
     }
 
-    fn get_sequence(&mut self, key: SequenceKey) -> Rc<Sequence> {
-        if let Some(sequence) = self.sequences.get(&key) {
+    fn get_sequence(&self, key: SequenceKey) -> Rc<Sequence> {
+        let mut sequences = self.sequences.borrow_mut();
+        if let Some(sequence) = sequences.get(&key) {
             return Rc::clone(sequence);
         }
 
-        self.sequences.insert(key, Rc::new(Sequence::new()));
-        Rc::clone(self.sequences.get(&key).unwrap())
+        sequences.insert(key, Rc::new(Sequence::new()));
+        Rc::clone(sequences.get(&key).unwrap())
     }
 
     /// Encodes a packet to its datagram representation,
     /// using the given ordinal and sequence key.
     fn encode_packet(
-        &mut self,
+        &self,
         packet: &impl Encode,
         header: DatagramHeader,
     ) -> anyhow::Result<Vec<u8>> {
@@ -100,10 +196,7 @@ where
 
     /// Decodes a packet from its datagram representation, using the given
     /// ordinal and sequence key.
-    fn decode_packet<P: Decode>(
-        &mut self,
-        mut bytes: &[u8],
-    ) -> anyhow::Result<(DatagramHeader, P)> {
+    fn decode_packet<P: Decode>(&self, mut bytes: &[u8]) -> anyhow::Result<(DatagramHeader, P)> {
         // Note: passing `&mut bytes` as the reader here
         // advances the `bytes` slice past the end of the header,
         // allowing us to decode the packet contents afterward.

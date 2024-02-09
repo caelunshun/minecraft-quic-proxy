@@ -29,7 +29,6 @@ use crate::{
     entity_id::EntityId,
     position::ChunkPosition,
     protocol::{
-        optimized_codec::OptimizedCodec,
         packet,
         packet::{
             client, server, side,
@@ -37,47 +36,18 @@ use crate::{
             state,
         },
     },
+    sequence::SequenceKey,
+    stream::SendStreamHandle,
 };
 use mini_moka::unsync::Cache;
-use quinn::{Connection, SendStream};
+use quinn::Connection;
 use std::time::Duration;
-use crate::sequence::SequenceKey;
-
-/// An open stream used during the "Play" state.
-///
-/// This combines a `quinn::SendStream` with the codec
-/// state used to delimit packets.
-pub struct StreamWrapper<Side> {
-    stream: SendStream,
-    codec: OptimizedCodec<Side, state::Play>,
-}
-
-impl<Side> StreamWrapper<Side>
-where
-    Side: packet::Side,
-{
-    /// Opens a new stream.
-    pub async fn open(connection: &Connection) -> anyhow::Result<Self> {
-        let stream = connection.open_uni().await?;
-        Ok(Self {
-            stream,
-            codec: OptimizedCodec::new(),
-        })
-    }
-
-    /// Sends a packet on this stream.
-    pub async fn send(&mut self, packet: &Side::SendPacket<state::Play>) -> anyhow::Result<()> {
-        let bytes = self.codec.encode_packet(packet)?;
-        self.stream.write_all(&bytes).await?;
-        Ok(())
-    }
-}
 
 /// Tells the proxy how to transmit a packet.
-pub enum Allocation<'a, Side> {
+pub enum Allocation<Side: packet::Side> {
     /// The packet will be sent on the given stream
     /// (reliable, ordered only with respect to that stream)
-    Stream(&'a mut StreamWrapper<Side>),
+    Stream(SendStreamHandle<Side, state::Play>),
     /// The packet should be sent as an unreliable datagram
     /// on the connection, with an ordinal allocated from
     /// the given sequence.
@@ -104,14 +74,14 @@ pub enum Allocation<'a, Side> {
 /// out of order (if the stream corresponding to that entity was re-created
 /// after the old one was dropped), but such situations are extremely
 /// rare for sufficiently high idle duration.
-pub struct StreamAllocator<Side> {
+pub struct StreamAllocator<Side: packet::Side> {
     connection: Connection,
 
-    entity_streams: Cache<EntityId, StreamWrapper<Side>>,
-    chunk_streams: Cache<ChunkPosition, StreamWrapper<Side>>,
+    entity_streams: Cache<EntityId, SendStreamHandle<Side, state::Play>>,
+    chunk_streams: Cache<ChunkPosition, SendStreamHandle<Side, state::Play>>,
 
-    chat_stream: StreamWrapper<Side>,
-    misc_stream: StreamWrapper<Side>,
+    chat_stream: SendStreamHandle<Side, state::Play>,
+    misc_stream: SendStreamHandle<Side, state::Play>,
 }
 
 /// Minimum duration a stream must be kept with no activity.
@@ -122,8 +92,8 @@ where
     Side: packet::Side,
 {
     pub async fn new(connection: &Connection) -> anyhow::Result<Self> {
-        let chat_stream = StreamWrapper::open(connection).await?;
-        let misc_stream = StreamWrapper::open(connection).await?;
+        let chat_stream = SendStreamHandle::open(connection).await?;
+        let misc_stream = SendStreamHandle::open(connection).await?;
 
         let entity_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
         let chunk_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
@@ -154,7 +124,7 @@ impl AllocateStream<side::Client> for StreamAllocator<side::Client> {
         _packet: &client::play::Packet,
     ) -> anyhow::Result<Allocation<Client>> {
         // TODO
-        Ok(Allocation::Stream(&mut self.misc_stream))
+        Ok(Allocation::Stream(self.misc_stream.clone()))
     }
 }
 
@@ -164,6 +134,6 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
         _packet: &server::play::Packet,
     ) -> anyhow::Result<Allocation<Server>> {
         // TODO
-        Ok(Allocation::Stream(&mut self.misc_stream))
+        Ok(Allocation::Stream(self.misc_stream.clone()))
     }
 }

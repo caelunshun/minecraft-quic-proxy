@@ -33,5 +33,7 @@ mod entity_id;
 mod io_duplex;
 mod position;
 mod protocol;
+mod proxy;
 mod sequence;
+mod stream;
 mod stream_allocation;
