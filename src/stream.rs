@@ -1,6 +1,6 @@
 use crate::protocol::{optimized_codec::OptimizedCodec, packet, packet::ProtocolState};
 use anyhow::anyhow;
-use quinn::Connection;
+use quinn::{Connection, RecvStream};
 use tokio::{sync::oneshot, task};
 
 type SendPacket<Side, State> = (
@@ -70,46 +70,21 @@ where
 {
     /// Accepts the next stream on the connection.
     pub async fn accept(connection: &Connection) -> anyhow::Result<Self> {
-        let mut stream = connection.accept_uni().await?;
+        let stream = connection.accept_uni().await?;
+        Ok(Self::from_stream_and_codec(stream, OptimizedCodec::new()))
+    }
+
+    fn from_stream_and_codec(
+        mut stream: RecvStream,
+        mut codec: OptimizedCodec<Side, State>,
+    ) -> Self {
         let (sender, receiver) = flume::bounded::<anyhow::Result<Side::RecvPacket<State>>>(4);
 
-        task::spawn(async move {
-            let mut codec = OptimizedCodec::<Side, State>::new();
-            let mut buffer = [0u8; 256];
-            loop {
-                loop {
-                    match codec.decode_packet() {
-                        Ok(Some(packet)) => {
-                            if sender.send_async(Ok(packet)).await.is_err() {
-                                return;
-                            }
-                        }
-                        Ok(None) => {
-                            break;
-                        }
-                        Err(e) => {
-                            sender.send_async(Err(e)).await.ok();
-                            return;
-                        }
-                    }
-                }
+        task::spawn(async move { drive_recv_stream(&mut stream, &mut codec, sender).await });
 
-                match stream.read(&mut buffer).await {
-                    Ok(Some(bytes_read)) => {
-                        codec.give_data(&buffer[..bytes_read]);
-                    }
-                    Ok(None) => break,
-                    Err(e) => {
-                        sender.send_async(Err(e.into())).await.ok();
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(Self {
+        Self {
             recv_data: receiver,
-        })
+        }
     }
 
     /// Waits for the next packet to be received on this stream.
@@ -119,6 +94,43 @@ where
             Ok(Ok(packet)) => Ok(Some(packet)),
             Ok(Err(e)) => Err(e),
             Err(_) => Ok(None),
+        }
+    }
+}
+
+async fn drive_recv_stream<Side: packet::Side, State: ProtocolState>(
+    stream: &mut RecvStream,
+    codec: &mut OptimizedCodec<Side, State>,
+    sender: flume::Sender<anyhow::Result<Side::RecvPacket<State>>>,
+) {
+    let mut buffer = [0u8; 256];
+    loop {
+        loop {
+            match codec.decode_packet() {
+                Ok(Some(packet)) => {
+                    if sender.send_async(Ok(packet)).await.is_err() {
+                        return;
+                    }
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    sender.send_async(Err(e)).await.ok();
+                    return;
+                }
+            }
+        }
+
+        match stream.read(&mut buffer).await {
+            Ok(Some(bytes_read)) => {
+                codec.give_data(&buffer[..bytes_read]);
+            }
+            Ok(None) => break,
+            Err(e) => {
+                sender.send_async(Err(e.into())).await.ok();
+                break;
+            }
         }
     }
 }

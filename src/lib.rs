@@ -30,6 +30,7 @@
 
 mod control_stream;
 mod entity_id;
+mod gateway;
 mod io_duplex;
 mod position;
 mod protocol;

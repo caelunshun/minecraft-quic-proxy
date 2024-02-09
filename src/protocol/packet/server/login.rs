@@ -35,8 +35,8 @@ pub struct LoginSuccess {
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SetCompression {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub threshold: u32,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]

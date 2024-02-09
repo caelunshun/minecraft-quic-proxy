@@ -9,6 +9,18 @@ pub enum Packet {
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Handshake {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub protocol_version: u32,
+    pub server_address: String,
+    pub server_port: u16,
+    pub next_state: NextState,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Encode, Decode)]
+#[encoding(discriminant = "varint")]
+pub enum NextState {
+    #[encoding(id = 1)]
+    Status,
+    #[encoding(id = 2)]
+    Login,
 }

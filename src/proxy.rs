@@ -10,7 +10,7 @@ use crate::{
     stream::{RecvStreamHandle, SendStreamHandle},
     stream_allocation::{AllocateStream, Allocation, StreamAllocator},
 };
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use quinn::Connection;
 use std::{marker::PhantomData, ops::ControlFlow, rc::Rc};
 use tokio::{
@@ -110,12 +110,96 @@ where
     }
 }
 
+/// Utility to listen for packets on all incoming
+/// QUIC streams (unidirectional only).
+struct QuicReceiver<Side: packet::Side, State: ProtocolState> {
+    connection: Connection,
+    stream_receives_tx: flume::Sender<anyhow::Result<Side::RecvPacket<State>>>,
+    stream_receives: flume::Receiver<anyhow::Result<Side::RecvPacket<State>>>,
+}
+
+impl<Side, State> QuicReceiver<Side, State>
+where
+    Side: packet::Side,
+    State: ProtocolState,
+{
+    pub fn new(connection: Connection) -> Self {
+        let (stream_receives_tx, stream_receives) = flume::bounded(16);
+        Self {
+            connection,
+            stream_receives,
+            stream_receives_tx,
+        }
+    }
+
+    pub async fn recv_packet(&self) -> anyhow::Result<Side::RecvPacket<State>> {
+        loop {
+            select! {
+                packet = self.stream_receives.recv_async() => {
+                    return packet?;
+                }
+                new_stream = RecvStreamHandle::<Side, State>::accept(&self.connection) => {
+                     let new_stream = new_stream?;
+                    let stream_receives = self.stream_receives_tx.clone();
+                    task::spawn(async move {
+                        loop {
+                            match new_stream.recv_packet().await {
+                                Ok(Some(packet)) => if stream_receives.send_async(Ok(packet)).await.is_err() {
+                                    break;
+                                }
+                                Ok(None) => break,
+                                Err(e) => {
+                                    stream_receives.send_async(Err(e)).await.ok();
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// `PacketIo` over QUIC, using only one stream
 /// for all packets. This is used in the Handshake/Login/Status
 /// /Configuration states.
+///
+/// Only one receive stream will be accepted. Others are ignored.
+/// (This ensures that state switching works correctly.)
 pub struct SingleQuicPacketIo<Side: packet::Side, State: ProtocolState> {
+    connection: Connection,
     send_stream: SendStreamHandle<Side, State>,
-    recv_stream: RecvStreamHandle<Side, State>,
+    recv_stream: Mutex<Option<RecvStreamHandle<Side, State>>>,
+}
+
+impl<Side, State> SingleQuicPacketIo<Side, State>
+where
+    Side: packet::Side,
+    State: ProtocolState,
+{
+    pub async fn new(connection: &Connection) -> anyhow::Result<Self> {
+        Ok(Self {
+            connection: connection.clone(),
+            send_stream: SendStreamHandle::open(connection).await?,
+            recv_stream: Mutex::new(None),
+        })
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    /// Changes to a new protocol state.
+    ///
+    /// All current streams are dropped. Both the client and gateway
+    /// sides of the connection must make the state change at the same
+    /// time, so that stream cooperation works correctly.
+    pub async fn switch_state<NewState: ProtocolState>(
+        self,
+    ) -> anyhow::Result<SingleQuicPacketIo<Side, NewState>> {
+        SingleQuicPacketIo::new(&self.connection).await
+    }
 }
 
 impl<Side, State> PacketIo<Side, State> for SingleQuicPacketIo<Side, State>
@@ -128,10 +212,21 @@ where
     }
 
     async fn recv_packet(&self) -> anyhow::Result<Side::RecvPacket<State>> {
-        self.recv_stream
-            .recv_packet()
-            .await
-            .map(|opt| opt.ok_or_else(|| anyhow!("end of stream")))?
+        loop {
+            let mut recv_stream = self.recv_stream.lock().await;
+
+            match &mut *recv_stream {
+                Some(stream) => {
+                    return stream
+                        .recv_packet()
+                        .await
+                        .map(|opt| opt.context("end of stream"))?
+                }
+                None => {
+                    *recv_stream = Some(RecvStreamHandle::accept(&self.connection).await?);
+                }
+            }
+        }
     }
 }
 
@@ -142,8 +237,7 @@ where
 pub struct QuicPacketIo<Side: packet::Side> {
     connection: Connection,
     stream_allocator: Mutex<StreamAllocator<Side>>,
-    stream_receives_tx: flume::Sender<anyhow::Result<Side::RecvPacket<Play>>>,
-    stream_receives: flume::Receiver<anyhow::Result<Side::RecvPacket<Play>>>,
+    receiver: QuicReceiver<Side, state::Play>,
     sequences: SequencesHandle<Side>,
 }
 
@@ -152,13 +246,11 @@ where
     Side: packet::Side,
 {
     pub async fn new(connection: Connection) -> anyhow::Result<Self> {
-        let (stream_receives_tx, stream_receives) = flume::bounded(16);
         Ok(Self {
             stream_allocator: Mutex::new(StreamAllocator::new(&connection).await?),
             sequences: SequencesHandle::new(connection.clone()),
+            receiver: QuicReceiver::new(connection.clone()),
             connection,
-            stream_receives,
-            stream_receives_tx,
         })
     }
 }
@@ -180,29 +272,9 @@ where
     }
 
     async fn recv_packet(&self) -> anyhow::Result<Side::RecvPacket<Play>> {
-        loop {
-            select! {
-                packet = self.sequences.recv_packet() => return packet,
-                packet = self.stream_receives.recv_async() => return packet.context("disconnected")?,
-                new_stream = RecvStreamHandle::<Side, state::Play>::accept(&self.connection) => {
-                    let new_stream = new_stream?;
-                    let stream_receives = self.stream_receives_tx.clone();
-                    task::spawn(async move {
-                        loop {
-                            match new_stream.recv_packet().await {
-                                Ok(Some(packet)) => if stream_receives.send_async(Ok(packet)).await.is_err() {
-                                    break;
-                                }
-                                Ok(None) => break,
-                                Err(e) => {
-                                    stream_receives.send_async(Err(e)).await.ok();
-                                    break;
-                                }
-                            }
-                        }
-                    });
-                }
-            }
+        select! {
+            packet = self.sequences.recv_packet() => packet,
+            packet = self.receiver.recv_packet() => packet,
         }
     }
 }
@@ -232,21 +304,29 @@ where
         }
     }
 
+    pub fn client_mut(&mut self) -> &mut Client {
+        Rc::get_mut(&mut self.client).unwrap()
+    }
+
+    pub fn server_mut(&mut self) -> &mut Server {
+        Rc::get_mut(&mut self.server).unwrap()
+    }
+
     /// Proxies packets between the two endpoints.
     ///
     /// Returns once either
     /// * an error or disconnect occurs; or
     /// * one of the provided callbacks returns `ControlFlow::Break`.
-    pub async fn proxy(
+    pub async fn proxy<R>(
         &mut self,
         mut intercept_client_packet: impl FnMut(
             &mut <side::Client as packet::Side>::SendPacket<State>,
-        ) -> ControlFlow<()>,
+        ) -> ControlFlow<R>,
         mut intercept_server_packet: impl FnMut(
             &mut <side::Server as packet::Side>::SendPacket<State>,
-        ) -> ControlFlow<()>,
-    ) -> anyhow::Result<()> {
-        loop {
+        ) -> ControlFlow<R>,
+    ) -> anyhow::Result<R> {
+        let result = loop {
             select! {
                 client_packet = self.client.recv_packet() => {
                     let mut client_packet= client_packet?;
@@ -257,8 +337,8 @@ where
                         server.send_packet(client_packet).await
                     });
 
-                    if control_flow.is_break() {
-                        break;
+                    if let ControlFlow::Break(result) = control_flow{
+                        break Ok(result);
                     }
                 }
                 server_packet = self.server.recv_packet() => {
@@ -270,22 +350,21 @@ where
                        client.send_packet(server_packet).await
                     });
 
-                    if control_flow.is_break() {
-                        break;
+                    if let ControlFlow::Break(result) = control_flow {
+                        break Ok(result );
                     }
                 }
                 opt_result = self.pending_tasks.join_next(), if !self.pending_tasks.is_empty() => {
                     opt_result.expect("no task?")??;
                 }
             }
-            todo!()
-        }
+        };
 
         while let Some(result) = self.pending_tasks.join_next().await {
             result??;
         }
 
-        Ok(())
+        result
     }
 
     pub fn into_parts(self) -> (Client, Server) {
