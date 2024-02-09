@@ -34,10 +34,10 @@ impl EncryptionKey {
 
 /// Threshold in bytes where a packet will be compressed.
 #[derive(Copy, Clone, Debug)]
-pub struct CompressionThreshold(NonZeroUsize);
+pub struct CompressionThreshold(usize);
 
 impl CompressionThreshold {
-    pub fn new(threshold: NonZeroUsize) -> Self {
+    pub fn new(threshold: usize) -> Self {
         Self(threshold)
     }
 }
@@ -101,16 +101,16 @@ where
         let uncompressed_length = i32::try_from(plain_buf.len())?;
         let mut compressed_buf = match &self.compression_state {
             Some(CompressionState { threshold }) => {
-                let (data_length, compressed_data) =
-                    if uncompressed_length as usize >= threshold.0.get() {
-                        let mut encoder =
-                            flate2::write::ZlibEncoder::new(Vec::new(), COMPRESSION_LEVEL);
-                        encoder.write_all(&plain_buf).expect("infallible write");
-                        (uncompressed_length, encoder.finish()?)
-                    } else {
-                        // send uncompressed
-                        (0, plain_buf)
-                    };
+                let (data_length, compressed_data) = if uncompressed_length as usize >= threshold.0
+                {
+                    let mut encoder =
+                        flate2::write::ZlibEncoder::new(Vec::new(), COMPRESSION_LEVEL);
+                    encoder.write_all(&plain_buf).expect("infallible write");
+                    (uncompressed_length, encoder.finish()?)
+                } else {
+                    // send uncompressed
+                    (0, plain_buf)
+                };
                 let mut buf = Vec::new();
                 let mut encoder = Encoder::new(&mut buf);
                 encoder.write_var_int(
