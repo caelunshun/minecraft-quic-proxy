@@ -53,7 +53,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ jni-lib-name }}
+          name: ${{ matrix.jni-lib-name }}
       
           # A file, directory or wildcard pattern that describes what to upload
           # Required.
