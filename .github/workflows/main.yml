@@ -1,0 +1,83 @@
+name: Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  upload-assets:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            jni-lib-name: libminecraft_quic_proxy_jni.so
+          - os: macos-latest
+            jni-lib-name: libminecraft_quic_proxy_jni.dylib
+          - os: windows-latest
+            jni-lib-name: minecraft_quic_proxy_jni.dll
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: minecraft-quic-proxy
+          tar: unix
+          zip: windows
+          checksum: sha256
+          
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build JNI libraries
+        run: |
+          cargo build --release -p minecraft-quic-proxy-jni
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ jni-lib-name }}
+      
+          # A file, directory or wildcard pattern that describes what to upload
+          # Required.
+          path: target/release/${{ jni-lib-name }}
+
+  build-client-mod:
+    needs: [upload-assets, create-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch JNI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: client-mod/src/main/resources
+      - name: Build mod
+        run: |
+          cd client-mod && ./gradlew clean build
+      - name: Upload mod JAR
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }} 
+          asset_path: client-mod/build/quic-proxy-1.0-SNAPSHOT.jar
+          asset_name: quic-proxy.jar
+          asset_content_type: application/zip
+      
