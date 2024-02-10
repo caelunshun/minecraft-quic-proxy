@@ -39,7 +39,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-rust-target
+     
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: minecraft-quic-proxy
@@ -77,9 +82,9 @@ jobs:
       - name: Build mod
         run: |
           cd client-mod
-          cp ../jni-libs-compiled/libminecraft_quic_proxy_jni.so src/main/resources
-          cp ../jni-libs-compiled/libminecraft_quic_proxy_jni.dylib src/main/resources
-          cp ../jni-libs-compiled/minecraft_quic_proxy_jni.dll src/main/resources
+          cp ../jni-libs-compiled/libminecraft_quic_proxy_jni.so/libminecraft_quic_proxy_jni.so src/main/resources
+          cp ../jni-libs-compiled/libminecraft_quic_proxy_jni.dylib/libminecraft_quic_proxy_jni.dylib src/main/resources
+          cp ../jni-libs-compiled/minecraft_quic_proxy_jni.dll/minecraft_quic_proxy_jni.dll src/main/resources
           chmod +x ./gradlew
           gradle wrapper
           ./gradlew build
