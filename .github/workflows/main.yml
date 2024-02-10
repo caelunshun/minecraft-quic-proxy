@@ -70,6 +70,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: client-mod/src/main/resources
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
       - name: Build mod
         run: |
           cd client-mod && ./gradlew clean build
