@@ -8,7 +8,11 @@ use crate::{
 };
 use anyhow::Context;
 use quinn::{Connection, Endpoint};
-use std::{net::SocketAddr, ops::ControlFlow, thread};
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    ops::ControlFlow,
+    thread,
+};
 use tokio::{
     net::{TcpListener, TcpStream},
     runtime,
@@ -33,7 +37,15 @@ impl ClientHandle {
         let client_listener = TcpListener::bind("127.0.0.1:0").await?;
         let bound_port = client_listener.local_addr()?.port();
 
-        let gateway_address: SocketAddr = format!("{gateway_host}:{gateway_port}").parse()?;
+        let endpoint_addr = endpoint.local_addr()?;
+        // Resolves address must match IP version
+        let gateway_address: SocketAddr = format!("{gateway_host}:{gateway_port}")
+            .to_socket_addrs()?
+            .find(|addr| {
+                (addr.is_ipv4() && endpoint_addr.is_ipv4())
+                    || (addr.is_ipv6() && endpoint_addr.is_ipv6())
+            })
+            .context("failed to resolve address")?;
         let gateway_connection = endpoint.connect(gateway_address, gateway_host)?.await?;
 
         let mut control_stream = control_stream::ClientSide::open(&gateway_connection).await?;

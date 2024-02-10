@@ -10,18 +10,44 @@ use crate::{
     },
     proxy::{PacketIo, Proxy, QuicPacketIo, SingleQuicPacketIo, VanillaPacketIo},
 };
-use anyhow::{bail, Context};
+use anyhow::{anyhow, bail, Context};
+use argon2::{PasswordHash, PasswordVerifier};
 use quinn::{Connection, Endpoint};
 use std::{ops::ControlFlow, thread, time::Duration};
 use tokio::{net::TcpStream, runtime, task::LocalSet, time::timeout};
 
+#[derive(Debug, Clone)]
+pub enum AuthenticationKey {
+    Plaintext(String),
+    Hashed(String),
+}
+
+impl AuthenticationKey {
+    pub fn is_correct(&self, key: &str) -> anyhow::Result<bool> {
+        match self {
+            Self::Plaintext(s) => Ok(s == key),
+            Self::Hashed(s) => Ok(argon2::Argon2::default()
+                .verify_password(
+                    key.as_bytes(),
+                    &PasswordHash::new(s).map_err(|_| {
+                        anyhow!("configured authentication key is invalid Argon2 hash")
+                    })?,
+                )
+                .is_ok()),
+        }
+    }
+}
+
 /// Runs a gateway server on the given endpoint.
-pub async fn run(endpoint: &Endpoint, authentication_key: &str) -> anyhow::Result<()> {
+pub async fn run(
+    endpoint: &Endpoint,
+    authentication_key: &AuthenticationKey,
+) -> anyhow::Result<()> {
     loop {
         let connection = endpoint.accept().await.context("endpoint closed")?.await?;
 
         tracing::info!("Accepted connection from {}", connection.remote_address());
-        let authentication_key = authentication_key.to_owned();
+        let authentication_key = authentication_key.clone();
         let runtime = runtime::Handle::current();
         thread::spawn(move || {
             let local_set = LocalSet::new();
@@ -38,14 +64,21 @@ pub async fn run(endpoint: &Endpoint, authentication_key: &str) -> anyhow::Resul
 const CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Accepts a new connection from a client.
-async fn drive_connection(connection: Connection, authentication_key: &str) -> anyhow::Result<()> {
+async fn drive_connection(
+    connection: Connection,
+    authentication_key: &AuthenticationKey,
+) -> anyhow::Result<()> {
     let mut control_stream = control_stream::GatewaySide::accept(&connection).await?;
     let connect_to = timeout(CONFIGURATION_TIMEOUT, control_stream.wait_for_connect_to()).await??;
 
-    if connect_to.authentication_key != authentication_key {
+    if !authentication_key.is_correct(&connect_to.authentication_key)? {
         bail!("client failed to present correct authentication key");
     }
 
+    tracing::info!(
+        "Connecting to destination server {}",
+        connect_to.destination_server
+    );
     let server_connection = TcpStream::connect(connect_to.destination_server).await?;
     tracing::info!(
         "Connected to destination server {}",

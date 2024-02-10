@@ -31,10 +31,19 @@ public class ConnectScreenConnectorMixin {
     @Redirect(method = "run", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/Connection;connect(Ljava/net/InetSocketAddress;ZLnet/minecraft/network/Connection;)Lio/netty/channel/ChannelFuture;"))
     private ChannelFuture connect(InetSocketAddress address, boolean nativeTransport, Connection connection) {
         ServerAddress serverAddress = ((ConnectScreenExt) (Object) parent).getServerAddress();
-        if (((ServerAddressExt) (Object) serverAddress).getConnectionType() == ConnectionType.NORMAL) {
-            return Connection.connect(address, nativeTransport, connection);
-        } else {
-            return ((ConnectionExt) connection).connectViaQuic(address);
-        }
+        ServerAddressExt mixinAddress = (ServerAddressExt) (Object) serverAddress;
+
+        return switch (mixinAddress.getConnectionType()) {
+            case NORMAL -> Connection.connect(address, nativeTransport, connection);
+            case QUIC -> {
+                ConnectionExt mixinConnection = (ConnectionExt) connection;
+                yield mixinConnection.connectViaQuic(
+                        new InetSocketAddress(serverAddress.getHost(), serverAddress.getPort()),
+                        mixinAddress.getGatewayAddress(),
+                        mixinAddress.getGatewayPort(),
+                        mixinAddress.getAuthenticationKey()
+                );
+            }
+        };
     }
 }

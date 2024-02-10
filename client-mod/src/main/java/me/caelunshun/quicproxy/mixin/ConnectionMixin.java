@@ -20,11 +20,13 @@ public class ConnectionMixin implements ConnectionExt {
     private RustQuicClient quicClient = null;
 
     @Override
-    public ChannelFuture connectViaQuic(InetSocketAddress destinationServer) {
+    public ChannelFuture connectViaQuic(InetSocketAddress destinationServer,
+                                        String gatewayAddress, int gatewayPort,
+                                        String authenticationKey) {
         this.type = ConnectionType.QUIC;
         String address = destinationServer.getAddress().getHostAddress() + ":" + destinationServer.getPort();
         this.quicClient = QUICProxyClient.instance.getQuicContext()
-                .createClient(address, "temp");
+                .createClient(gatewayAddress, gatewayPort, address, authenticationKey);
 
         InetSocketAddress clientAddr = new InetSocketAddress("127.0.0.1", quicClient.getPort());
 
