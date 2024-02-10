@@ -7,8 +7,13 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+anyhow = "1"
 jni = "0.21"
 minecraft-quic-proxy = { path = ".." }
-rustls = { version = "0.21", features = ["dangerous_configuration"] }
+rustls = "0.21"
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
+quinn = { version = "0.10", default-features = false, features = ["native-certs"] }
+
+[features]
+ignore-server-certificates = ["rustls/dangerous_configuration"]

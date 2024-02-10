@@ -45,8 +45,8 @@ pub trait ProtocolState: Send + Sync + 'static {
 }
 
 pub mod state {
-    use minecraft_quic_proxy_macros::{Decode, Encode};
     use super::*;
+    use minecraft_quic_proxy_macros::{Decode, Encode};
 
     #[derive(Debug, Copy, Clone)]
     pub struct Handshake;
@@ -54,10 +54,10 @@ pub mod state {
         type ServerPacket = EmptyPacket;
         type ClientPacket = client::handshake::Packet;
     }
-    
+
     #[derive(Encode, Decode, Debug, Clone)]
     pub struct EmptyPacket;
-    
+
     impl AsRef<str> for EmptyPacket {
         fn as_ref(&self) -> &str {
             ""

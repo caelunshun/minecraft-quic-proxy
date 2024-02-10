@@ -9,11 +9,13 @@ edition = "2021"
 aes = "0.8"
 ahash = "0.8"
 anyhow = "1"
+argon2 = "0.5"
 bincode = "1"
 bitflags = "2"
 bytemuck = "1"
 bytes = "1"
 cfb8 = "0.8"
+clap = { version = "4", features = ["derive"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
 flume = "0.11"
 fs-err = "2"
@@ -25,6 +27,7 @@ pin-project = "1"
 quinn = { version = "0.10", default-features = false, features = ["tls-rustls", "runtime-tokio", "log"] }
 rcgen = "0.12"
 rustls = "0.21"
+rustls-pemfile = "2"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 thiserror = "1"

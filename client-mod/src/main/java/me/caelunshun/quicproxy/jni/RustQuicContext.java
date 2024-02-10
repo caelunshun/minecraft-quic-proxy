@@ -7,8 +7,9 @@ public class RustQuicContext {
         ptr = init();
     }
 
-    public RustQuicClient createClient(String destinationServerAddress, String authenticationKey) {
-        return new RustQuicClient(createClient(ptr, destinationServerAddress, authenticationKey));
+    public RustQuicClient createClient(String gatewayHost, int gatewayPort,
+                                       String destinationServerAddress, String authenticationKey) {
+        return new RustQuicClient(createClient(ptr, gatewayHost, gatewayPort, destinationServerAddress, authenticationKey));
     }
 
     @Override
@@ -17,6 +18,7 @@ public class RustQuicContext {
     }
 
     private static native long init();
-    private static native long createClient(long ptr, String destinationServerAddress, String authenticationKey);
+    private static native long createClient(long ptr, String gatewayHost, int gatewayPort,
+                                            String destinationServerAddress, String authenticationKey);
     private static native void drop(long ptr);
 }
