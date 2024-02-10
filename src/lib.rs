@@ -28,9 +28,10 @@
 #![feature(error_generic_member_access)]
 #![allow(dead_code)]
 
+pub mod client;
 mod control_stream;
 mod entity_id;
-mod gateway;
+pub mod gateway;
 mod io_duplex;
 mod position;
 mod protocol;
@@ -38,3 +39,5 @@ mod proxy;
 mod sequence;
 mod stream;
 mod stream_allocation;
+
+pub use quinn;

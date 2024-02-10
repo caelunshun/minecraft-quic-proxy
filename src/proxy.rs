@@ -10,9 +10,9 @@ use crate::{
     stream::{RecvStreamHandle, SendStreamHandle},
     stream_allocation::{AllocateStream, Allocation, StreamAllocator},
 };
-use anyhow::Context;
+use anyhow::{bail, Context};
 use quinn::Connection;
-use std::{marker::PhantomData, ops::ControlFlow, rc::Rc};
+use std::{any::type_name, marker::PhantomData, ops::ControlFlow, sync::Arc};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
@@ -105,6 +105,9 @@ where
             }
 
             let bytes_read = stream.read(&mut buffer).await?;
+            if bytes_read == 0 {
+                bail!("disconnected from TCP");
+            }
             codec.give_data(&mut buffer[..bytes_read]);
         }
     }
@@ -138,7 +141,7 @@ where
                 packet = self.stream_receives.recv_async() => {
                     return packet?;
                 }
-                new_stream = RecvStreamHandle::<Side, State>::accept(&self.connection) => {
+                new_stream = RecvStreamHandle::<Side, State>::accept(&self.connection, "incoming_any") => {
                      let new_stream = new_stream?;
                     let stream_receives = self.stream_receives_tx.clone();
                     task::spawn(async move {
@@ -181,7 +184,7 @@ where
     pub async fn new(connection: &Connection) -> anyhow::Result<Self> {
         Ok(Self {
             connection: connection.clone(),
-            send_stream: SendStreamHandle::open(connection).await?,
+            send_stream: SendStreamHandle::open(connection, type_name::<State>()).await?,
             recv_stream: Mutex::new(None),
         })
     }
@@ -223,7 +226,9 @@ where
                         .map(|opt| opt.context("end of stream"))?
                 }
                 None => {
-                    *recv_stream = Some(RecvStreamHandle::accept(&self.connection).await?);
+                    *recv_stream = Some(
+                        RecvStreamHandle::accept(&self.connection, type_name::<State>()).await?,
+                    );
                 }
             }
         }
@@ -280,12 +285,10 @@ where
 }
 
 /// Utility to proxy packets between two `PacketIo` instances.
-///
-/// Must be in a `LocalSet` context.
 pub struct Proxy<Client, Server, State> {
     pending_tasks: JoinSet<anyhow::Result<()>>,
-    client: Rc<Client>,
-    server: Rc<Server>,
+    client: Arc<Client>,
+    server: Arc<Server>,
     _marker: PhantomData<State>,
 }
 
@@ -298,18 +301,18 @@ where
     pub fn new(client: Client, server: Server) -> Self {
         Self {
             pending_tasks: JoinSet::new(),
-            client: Rc::new(client),
-            server: Rc::new(server),
+            client: Arc::new(client),
+            server: Arc::new(server),
             _marker: PhantomData,
         }
     }
 
     pub fn client_mut(&mut self) -> &mut Client {
-        Rc::get_mut(&mut self.client).unwrap()
+        Arc::get_mut(&mut self.client).unwrap()
     }
 
     pub fn server_mut(&mut self) -> &mut Server {
-        Rc::get_mut(&mut self.server).unwrap()
+        Arc::get_mut(&mut self.server).unwrap()
     }
 
     /// Proxies packets between the two endpoints.
@@ -317,7 +320,7 @@ where
     /// Returns once either
     /// * an error or disconnect occurs; or
     /// * one of the provided callbacks returns `ControlFlow::Break`.
-    pub async fn proxy<R>(
+    pub async fn run<R>(
         &mut self,
         mut intercept_client_packet: impl FnMut(
             &mut <side::Client as packet::Side>::SendPacket<State>,
@@ -332,7 +335,8 @@ where
                     let mut client_packet= client_packet?;
                     let control_flow = intercept_client_packet(&mut client_packet);
 
-                    let server = Rc::clone(&self.server);
+                    tracing::debug!("client => server: {}", client_packet.as_ref());
+                    let server = Arc::clone(&self.server);
                     self.pending_tasks.spawn_local(async move {
                         server.send_packet(client_packet).await
                     });
@@ -345,7 +349,8 @@ where
                     let mut server_packet = server_packet?;
                     let control_flow = intercept_server_packet(&mut server_packet);
 
-                    let client = Rc::clone(&self.client);
+                    tracing::debug!("server => client: {}", server_packet.as_ref());
+                    let client = Arc::clone(&self.client);
                     self.pending_tasks.spawn_local(async move {
                        client.send_packet(server_packet).await
                     });
@@ -369,8 +374,8 @@ where
 
     pub fn into_parts(self) -> (Client, Server) {
         (
-            Rc::into_inner(self.client).unwrap(),
-            Rc::into_inner(self.server).unwrap(),
+            Arc::into_inner(self.client).unwrap(),
+            Arc::into_inner(self.server).unwrap(),
         )
     }
 }

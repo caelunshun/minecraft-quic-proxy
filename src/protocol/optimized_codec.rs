@@ -14,8 +14,8 @@
 //! * use a pre-trained dictionary for better compression
 
 use crate::protocol::{
-    packet, packet::ProtocolState, vanilla_codec::var_int_size, Decode, Decoder, Encode, Encoder,
-    BUFFER_LIMIT,
+    packet, packet::ProtocolState, vanilla_codec::var_int_size, Decode, DecodeError, Decoder,
+    Encode, Encoder, BUFFER_LIMIT,
 };
 use anyhow::{bail, Context};
 use bitflags::bitflags;
@@ -110,7 +110,11 @@ where
 
     pub fn decode_packet(&mut self) -> anyhow::Result<Option<Side::RecvPacket<State>>> {
         let mut decoder = Decoder::new(&self.read_buffer);
-        let length = usize::try_from(decoder.read_var_int()?)?;
+        let length = match decoder.read_var_int() {
+            Ok(x) => x.try_into()?,
+            Err(DecodeError::EndOfStream(_, _)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         if length > BUFFER_LIMIT {
             bail!("packet length of {length} is too large");
         }

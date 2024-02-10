@@ -72,7 +72,11 @@ impl Codec {
     }
 
     pub async fn recv_message<M: DeserializeOwned>(&mut self) -> anyhow::Result<M> {
-        let bytes = self.framed.next().await.context("end of stream")??;
+        let bytes = self
+            .framed
+            .next()
+            .await
+            .context("control stream: end of stream")??;
         let message = decode(&bytes)?;
         Ok(message)
     }

@@ -7,14 +7,15 @@
 //! loss of information.)
 
 use crate::protocol::{Decode, Encode};
+use std::fmt::Debug;
 
 pub mod client;
 pub mod server;
 
 /// Type encoding for a side (client or server).
-pub trait Side: Send + Sync + 'static {
-    type SendPacket<State: ProtocolState>: Encode + Send + 'static;
-    type RecvPacket<State: ProtocolState>: Decode + Send + 'static;
+pub trait Side: Send + Sync + 'static + Copy + Clone {
+    type SendPacket<State: ProtocolState>: Encode + Debug + AsRef<str> + Send + 'static;
+    type RecvPacket<State: ProtocolState>: Decode + Debug + AsRef<str> + Send + 'static;
 }
 
 pub mod side {
@@ -38,19 +39,29 @@ pub mod side {
 /// Type encoding for a protocol state.
 pub trait ProtocolState: Send + Sync + 'static {
     /// Packet type sent by the server in this state.
-    type ServerPacket: Encode + Decode + Send + 'static;
+    type ServerPacket: Encode + Decode + Debug + AsRef<str> + Send + 'static;
     /// Packet type sent by the client in this state.
-    type ClientPacket: Encode + Decode + Send + 'static;
+    type ClientPacket: Encode + Decode + Debug + AsRef<str> + Send + 'static;
 }
 
 pub mod state {
+    use minecraft_quic_proxy_macros::{Decode, Encode};
     use super::*;
 
     #[derive(Debug, Copy, Clone)]
     pub struct Handshake;
     impl ProtocolState for Handshake {
-        type ServerPacket = ();
+        type ServerPacket = EmptyPacket;
         type ClientPacket = client::handshake::Packet;
+    }
+    
+    #[derive(Encode, Decode, Debug, Clone)]
+    pub struct EmptyPacket;
+    
+    impl AsRef<str> for EmptyPacket {
+        fn as_ref(&self) -> &str {
+            ""
+        }
     }
 
     #[derive(Debug, Copy, Clone)]

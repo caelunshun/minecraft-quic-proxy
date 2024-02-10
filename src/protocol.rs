@@ -13,11 +13,3 @@ pub use encoder::{Encode, Encoder};
 
 /// Limit to avoid out-of-memory DOS.
 const BUFFER_LIMIT: usize = 1024 * 1024; // 1 MiB
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ConnectionState {
-    Handshake,
-    Status,
-    Configuration,
-    Play,
-}

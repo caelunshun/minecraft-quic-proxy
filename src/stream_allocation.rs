@@ -39,7 +39,7 @@ use crate::{
     sequence::SequenceKey,
     stream::SendStreamHandle,
 };
-use mini_moka::unsync::Cache;
+use mini_moka::sync::Cache;
 use quinn::Connection;
 use std::time::Duration;
 
@@ -89,11 +89,11 @@ pub const STREAM_IDLE_DURATION: Duration = Duration::from_secs(90);
 
 impl<Side> StreamAllocator<Side>
 where
-    Side: packet::Side,
+    Side: packet::Side + Clone,
 {
     pub async fn new(connection: &Connection) -> anyhow::Result<Self> {
-        let chat_stream = SendStreamHandle::open(connection).await?;
-        let misc_stream = SendStreamHandle::open(connection).await?;
+        let chat_stream = SendStreamHandle::open(connection, "chat").await?;
+        let misc_stream = SendStreamHandle::open(connection, "misc").await?;
 
         let entity_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
         let chunk_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();

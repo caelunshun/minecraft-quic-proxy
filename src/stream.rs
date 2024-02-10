@@ -1,6 +1,7 @@
 use crate::protocol::{optimized_codec::OptimizedCodec, packet, packet::ProtocolState};
 use anyhow::anyhow;
 use quinn::{Connection, RecvStream};
+use std::borrow::Cow;
 use tokio::{sync::oneshot, task};
 
 type SendPacket<Side, State> = (
@@ -24,7 +25,11 @@ where
     State: ProtocolState,
 {
     /// Opens a new stream.
-    pub async fn open(connection: &Connection) -> anyhow::Result<Self> {
+    pub async fn open(
+        connection: &Connection,
+        name: impl Into<Cow<'static, str>>,
+    ) -> anyhow::Result<Self> {
+        let name = name.into();
         let mut stream = connection.open_uni().await?;
         let (sender, receiver) = flume::bounded::<SendPacket<Side, State>>(4);
         task::spawn(async move {
@@ -38,6 +43,8 @@ where
                     break;
                 }
             }
+            let id = stream.id();
+            tracing::debug!("Closing send stream {name} (QUIC ID = {id:?})");
         });
         Ok(Self { send_data: sender })
     }
@@ -69,18 +76,31 @@ where
     State: ProtocolState,
 {
     /// Accepts the next stream on the connection.
-    pub async fn accept(connection: &Connection) -> anyhow::Result<Self> {
+    pub async fn accept(
+        connection: &Connection,
+        name: impl Into<Cow<'static, str>>,
+    ) -> anyhow::Result<Self> {
         let stream = connection.accept_uni().await?;
-        Ok(Self::from_stream_and_codec(stream, OptimizedCodec::new()))
+        Ok(Self::from_stream_and_codec(
+            stream,
+            OptimizedCodec::new(),
+            name,
+        ))
     }
 
     fn from_stream_and_codec(
         mut stream: RecvStream,
         mut codec: OptimizedCodec<Side, State>,
+        name: impl Into<Cow<'static, str>>,
     ) -> Self {
+        let name = name.into();
         let (sender, receiver) = flume::bounded::<anyhow::Result<Side::RecvPacket<State>>>(4);
 
-        task::spawn(async move { drive_recv_stream(&mut stream, &mut codec, sender).await });
+        task::spawn(async move {
+            let id = stream.id();
+            drive_recv_stream(&mut stream, &mut codec, sender).await;
+            tracing::debug!("Lost receive stream {name} (QUIC ID = {id:?})");
+        });
 
         Self {
             recv_data: receiver,

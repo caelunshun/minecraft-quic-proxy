@@ -139,6 +139,12 @@ impl<'a> Decoder<'a> {
 
     /// Reads a VarInt from the stream.
     pub fn read_var_int(&mut self) -> Result<i32> {
+        self.read_var_int_with_size().map(|(x, _)| x)
+    }
+
+    /// Reads a VarInt from the stream, additionally
+    /// returning the number of bytes read.
+    pub fn read_var_int_with_size(&mut self) -> Result<(i32, usize)> {
         let mut num_read = 0;
         let mut result = 0;
 
@@ -156,7 +162,7 @@ impl<'a> Decoder<'a> {
                 break;
             }
         }
-        Ok(result)
+        Ok((result, num_read as usize))
     }
 
     /// Reads a string from the stream.

@@ -13,7 +13,6 @@ use std::{
     borrow::Cow,
     io::{Read, Write},
     marker::PhantomData,
-    num::NonZeroUsize,
     slice,
 };
 
@@ -116,6 +115,8 @@ where
                 encoder.write_var_int(
                     var_int_size(data_length) as i32 + i32::try_from(compressed_data.len())?,
                 );
+                encoder.write_var_int(data_length);
+                encoder.write_slice(&compressed_data);
 
                 buf
             }
@@ -169,9 +170,13 @@ where
     pub fn decode_packet(&mut self) -> anyhow::Result<Option<Side::RecvPacket<State>>> {
         // Note: data in the read buffer is already decrypted.
         let mut decoder = Decoder::new(&self.read_buffer);
-        let length = decoder.read_var_int()?;
-        let length = usize::try_from(length)?;
-        let total_bytes = length + var_int_size(length as i32);
+        let (length, length_prefix_size) = match decoder.read_var_int_with_size() {
+            Ok((length, length_prefix_size)) => (usize::try_from(length)?, length_prefix_size),
+            Err(DecodeError::EndOfStream(_, _)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        let total_bytes = length + length_prefix_size;
 
         if length > BUFFER_LIMIT {
             bail!("packet length of {length} exceeds maximum allowed");

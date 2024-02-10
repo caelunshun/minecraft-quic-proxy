@@ -10,10 +10,30 @@ use crate::{
     },
     proxy::{PacketIo, Proxy, QuicPacketIo, SingleQuicPacketIo, VanillaPacketIo},
 };
-use anyhow::bail;
-use quinn::Connection;
-use std::{ops::ControlFlow, time::Duration};
-use tokio::{net::TcpStream, time::timeout};
+use anyhow::{bail, Context};
+use quinn::{Connection, Endpoint};
+use std::{ops::ControlFlow, thread, time::Duration};
+use tokio::{net::TcpStream, runtime, task::LocalSet, time::timeout};
+
+/// Runs a gateway server on the given endpoint.
+pub async fn run(endpoint: &Endpoint, authentication_key: &str) -> anyhow::Result<()> {
+    loop {
+        let connection = endpoint.accept().await.context("endpoint closed")?.await?;
+
+        tracing::info!("Accepted connection from {}", connection.remote_address());
+        let authentication_key = authentication_key.to_owned();
+        let runtime = runtime::Handle::current();
+        thread::spawn(move || {
+            let local_set = LocalSet::new();
+            local_set.spawn_local(async move {
+                if let Err(e) = drive_connection(connection, &authentication_key).await {
+                    tracing::info!("Connection lost: {e:?}");
+                }
+            });
+            runtime.block_on(local_set);
+        });
+    }
+}
 
 const CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -27,6 +47,10 @@ async fn drive_connection(connection: Connection, authentication_key: &str) -> a
     }
 
     let server_connection = TcpStream::connect(connect_to.destination_server).await?;
+    tracing::info!(
+        "Connected to destination server {}",
+        connect_to.destination_server
+    );
     let server_connection: VanillaPacketIo<side::Client, state::Handshake> =
         VanillaPacketIo::new(server_connection)?;
     control_stream.acknowledge_connect_to().await?;
@@ -45,7 +69,7 @@ async fn drive_connection(connection: Connection, authentication_key: &str) -> a
     };
 
     Proxy::new(client_connection, server_connection)
-        .proxy(
+        .run(
             |_| ControlFlow::Continue(()),
             |_| ControlFlow::<()>::Continue(()),
         )
@@ -68,9 +92,13 @@ async fn configure_connection(
     control_stream: &mut control_stream::GatewaySide,
 ) -> anyhow::Result<Option<PlayConnections>> {
     let client::handshake::Packet::Handshake(handshake) = client_connection.recv_packet().await?;
+    server_connection
+        .send_packet(client::handshake::Packet::Handshake(handshake.clone()))
+        .await?;
 
     match handshake.next_state {
         NextState::Status => {
+            tracing::debug!("Transition to Status state");
             handle_status(
                 server_connection.switch_state(),
                 client_connection.switch_state().await?,
@@ -79,11 +107,13 @@ async fn configure_connection(
             Ok(None)
         }
         NextState::Login => {
+            tracing::debug!("Transition to Login state");
             let (client_connection, server_connection) = (
                 client_connection.switch_state::<state::Login>().await?,
                 server_connection.switch_state::<state::Login>(),
             );
 
+            #[derive(Debug)]
             enum Status {
                 EnableEncryption,
                 EnableCompression(CompressionThreshold),
@@ -93,7 +123,7 @@ async fn configure_connection(
             let mut proxy = Proxy::new(client_connection, server_connection);
             loop {
                 let status = proxy
-                    .proxy(
+                    .run(
                         |client_packet| {
                             if let client::login::Packet::LoginAcknowledged(_) = client_packet {
                                 ControlFlow::Break(Status::FinishLogin)
@@ -109,7 +139,7 @@ async fn configure_connection(
                             if let server::login::Packet::SetCompression(packet) = server_packet {
                                 if let Ok(threshold) = usize::try_from(packet.threshold) {
                                     return ControlFlow::Break(Status::EnableCompression(
-                                        CompressionThreshold::new(packet.threshold as usize),
+                                        CompressionThreshold::new(threshold),
                                     ));
                                 }
                             }
@@ -117,6 +147,7 @@ async fn configure_connection(
                         },
                     )
                     .await?;
+                tracing::debug!("Login loop status: {status:?}");
 
                 match status {
                     Status::EnableEncryption => {
@@ -149,10 +180,11 @@ async fn do_configuration(
     client_connection: SingleQuicPacketIo<side::Server, state::Configuration>,
     server_connection: VanillaPacketIo<side::Client, state::Configuration>,
 ) -> anyhow::Result<PlayConnections> {
+    tracing::debug!("Transition to Configuration state");
     let mut proxy = Proxy::new(client_connection, server_connection);
 
     proxy
-        .proxy(
+        .run(
             |packet| {
                 if let client::configuration::Packet::FinishConfiguration(_) = packet {
                     ControlFlow::Break(())
@@ -169,6 +201,7 @@ async fn do_configuration(
     let new_client_connection =
         QuicPacketIo::<side::Server>::new(client_connection.connection().clone()).await?;
 
+    tracing::debug!("Transition to Play state");
     Ok((new_client_connection, server_connection.switch_state()))
 }
 
@@ -177,7 +210,7 @@ async fn handle_status(
     client_connection: SingleQuicPacketIo<side::Server, state::Status>,
 ) -> anyhow::Result<()> {
     Proxy::new(client_connection, server_connection)
-        .proxy(
+        .run(
             |_| ControlFlow::<()>::Continue(()),
             |_| ControlFlow::Continue(()),
         )
