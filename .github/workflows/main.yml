@@ -76,7 +76,9 @@ jobs:
           java-version: '17'
       - name: Build mod
         run: |
-          cd client-mod && ./gradlew clean build
+          cd client-mod
+          chmod +x ./gradlew
+          ./gradlew clean build
       - name: Upload mod JAR
         uses: actions/upload-release-asset@v1
         env:
