@@ -21,7 +21,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          release_name: ${{ github.ref }}
           draft: false
           prerelease: false
 
@@ -69,7 +69,7 @@ jobs:
       - name: Fetch JNI artifacts
         uses: actions/download-artifact@v4
         with:
-          path: client-mod/src/main/resources
+          path: jni-libs-compiled
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -77,6 +77,9 @@ jobs:
       - name: Build mod
         run: |
           cd client-mod
+          cp ../jni-libs-compiled/libminecraft_quic_proxy_jni.so src/main/resources
+          cp ../jni-libs-compiled/libminecraft_quic_proxy_jni.dylib src/main/resources
+          cp ../jni-libs-compiled/minecraft_quic_proxy_jni.dll src/main/resources
           chmod +x ./gradlew
           gradle wrapper
           ./gradlew build
