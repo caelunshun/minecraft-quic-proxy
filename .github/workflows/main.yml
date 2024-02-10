@@ -86,7 +86,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }} 
-          asset_path: client-mod/build/quic-proxy-1.0-SNAPSHOT.jar
+          asset_path: client-mod/build/libs/quic-proxy-1.0-SNAPSHOT.jar
           asset_name: quic-proxy.jar
           asset_content_type: application/zip
       
