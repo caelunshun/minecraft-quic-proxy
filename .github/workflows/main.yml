@@ -25,7 +25,7 @@ jobs:
           draft: false
           prerelease: false
 
-  upload-assets:
+  compile-rust:
     strategy:
       matrix:
         include:
@@ -38,6 +38,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: minecraft-quic-proxy
@@ -60,7 +62,7 @@ jobs:
           path: target/release/${{ matrix.jni-lib-name }}
 
   build-client-mod:
-    needs: [upload-assets, create-release]
+    needs: [compile-rust, create-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
