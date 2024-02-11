@@ -1,6 +1,7 @@
 //! Implements proxy logic.
 
 use crate::{
+    packet_translation::{PacketTranslator, TranslatePacket},
     protocol::{
         packet,
         packet::{side, state, state::Play, ProtocolState},
@@ -142,7 +143,7 @@ where
                     return packet?;
                 }
                 new_stream = RecvStreamHandle::<Side, State>::accept(&self.connection, "incoming_any") => {
-                     let new_stream = new_stream?;
+                    let new_stream = new_stream?;
                     let stream_receives = self.stream_receives_tx.clone();
                     task::spawn(async move {
                         loop {
@@ -242,6 +243,7 @@ where
 pub struct QuicPacketIo<Side: packet::Side> {
     connection: Connection,
     stream_allocator: Mutex<StreamAllocator<Side>>,
+    packet_translator: Mutex<PacketTranslator>,
     receiver: QuicReceiver<Side, state::Play>,
     sequences: SequencesHandle<Side>,
 }
@@ -253,6 +255,7 @@ where
     pub async fn new(connection: Connection) -> anyhow::Result<Self> {
         Ok(Self {
             stream_allocator: Mutex::new(StreamAllocator::new(&connection).await?),
+            packet_translator: Mutex::new(PacketTranslator::new()),
             sequences: SequencesHandle::new(connection.clone()),
             receiver: QuicReceiver::new(connection.clone()),
             connection,
@@ -264,15 +267,23 @@ impl<Side> PacketIo<Side, state::Play> for QuicPacketIo<Side>
 where
     Side: packet::Side,
     StreamAllocator<Side>: AllocateStream<Side>,
+    PacketTranslator: TranslatePacket<Side>,
 {
     async fn send_packet(&self, packet: Side::SendPacket<Play>) -> anyhow::Result<()> {
+        let packet = self
+            .packet_translator
+            .lock()
+            .await
+            .translate_packet(&packet)
+            .unwrap_or(packet);
+
         let mut stream_allocator = self.stream_allocator.lock().await;
         let allocation = stream_allocator.allocate_stream_for(&packet).await?;
         drop(stream_allocator);
 
         match allocation {
             Allocation::Stream(stream) => stream.send_packet(packet).await,
-            Allocation::Sequence(key) => self.sequences.send_packet(key, packet).await,
+            Allocation::UnreliableSequence(key) => self.sequences.send_packet(key, packet).await,
         }
     }
 

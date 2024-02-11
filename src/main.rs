@@ -1,8 +1,11 @@
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
-use minecraft_quic_proxy::{gateway, gateway::AuthenticationKey};
+use minecraft_quic_proxy::{gateway, gateway::AuthenticationKey, transport_config};
 use quinn::{Endpoint, ServerConfig};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -36,7 +39,7 @@ pub async fn main() -> anyhow::Result<()> {
 
     let Command::Gateway(args) = cli.command;
 
-    let server_config = if args.self_signed_cert {
+    let mut server_config = if args.self_signed_cert {
         server_config_self_signed()?
     } else {
         server_config_with_cert(
@@ -48,6 +51,7 @@ pub async fn main() -> anyhow::Result<()> {
                 .context("must provide a private key path")?,
         )?
     };
+    server_config.transport_config(Arc::new(transport_config()));
 
     let endpoint = Endpoint::server(
         server_config,

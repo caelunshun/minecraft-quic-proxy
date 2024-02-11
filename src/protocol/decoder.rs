@@ -260,6 +260,13 @@ impl Decode for String {
     }
 }
 
+impl Decode for u128 {
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        let bytes = decoder.consume::<16>()?;
+        Ok(Self::from_be_bytes(bytes))
+    }
+}
+
 impl Decode for () {
     fn decode(_decoder: &mut Decoder) -> Result<Self> {
         Ok(())

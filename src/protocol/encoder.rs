@@ -184,6 +184,12 @@ impl Encode for String {
     }
 }
 
+impl Encode for u128 {
+    fn encode(&self, encoder: &mut Encoder) {
+        encoder.write_slice(&self.to_be_bytes())
+    }
+}
+
 impl Encode for () {
     fn encode(&self, _encoder: &mut Encoder) {}
 }

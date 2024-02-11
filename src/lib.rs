@@ -33,6 +33,7 @@ mod control_stream;
 mod entity_id;
 pub mod gateway;
 mod io_duplex;
+mod packet_translation;
 mod position;
 mod protocol;
 mod proxy;
@@ -41,3 +42,16 @@ mod stream;
 mod stream_allocation;
 
 pub use quinn;
+use quinn::{IdleTimeout, TransportConfig, VarInt};
+use std::time::Duration;
+
+/// Gets the QUIC transport config for a proxied connection.
+pub fn transport_config() -> TransportConfig {
+    let mut config = TransportConfig::default();
+    config
+        .max_concurrent_uni_streams(VarInt::from_u32(16384))
+        .max_idle_timeout(Some(
+            IdleTimeout::try_from(Duration::from_secs(30)).unwrap(),
+        ));
+    config
+}

@@ -1,3 +1,4 @@
+use crate::protocol::{decoder, Decode, Decoder, Encode, Encoder};
 use minecraft_quic_proxy_macros::{Decode, Encode};
 
 #[derive(Debug, Clone, Encode, Decode, strum::AsRefStr)]
@@ -244,16 +245,40 @@ pub struct BundleDelimiter {
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SpawnEntity {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub entity_id: i32,
+    pub uuid: u128,
+    #[encoding(varint)]
+    pub kind: i32,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    #[encoding(angle)]
+    pub pitch: f32,
+    #[encoding(angle)]
+    pub yaw: f32,
+    #[encoding(angle)]
+    pub head_yaw: f32,
+    #[encoding(varint)]
+    pub data: i32,
+    pub velocity_x: i16,
+    pub velocity_y: i16,
+    pub velocity_z: i16,
 }
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SpawnExperienceOrb {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub entity_id: i32,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub amount: u16,
 }
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct EntityAnimation {
     #[encoding(length_prefix = "inferred")]
@@ -426,6 +451,8 @@ pub struct KeepAlive {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct ChunkAndLightData {
+    pub chunk_x: i32,
+    pub chunk_z: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -441,6 +468,10 @@ pub struct Particle {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct UpdateLight {
+    #[encoding(varint)]
+    pub chunk_x: i32,
+    #[encoding(varint)]
+    pub chunk_z: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -461,18 +492,36 @@ pub struct MerchantOffers {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct UpdateEntityPosition {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub entity_id: i32,
+    pub delta_x: i16,
+    pub delta_y: i16,
+    pub delta_z: i16,
+    pub on_ground: bool,
 }
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct UpdateEntityPositionAndRotation {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub entity_id: i32,
+    pub delta_x: i16,
+    pub delta_y: i16,
+    pub delta_z: i16,
+    #[encoding(angle)]
+    pub yaw: f32,
+    #[encoding(angle)]
+    pub pitch: f32,
+    pub on_ground: bool,
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct UpdateEntityRotation {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub entity_id: i32,
+    #[encoding(angle)]
+    pub yaw: f32,
+    #[encoding(angle)]
+    pub pitch: f32,
+    pub on_ground: bool,
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct MoveVehicle {
@@ -559,10 +608,28 @@ pub struct UpdateRecipeBook {
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
-#[derive(Debug, Clone, Encode, Decode)]
+#[derive(Debug, Clone)]
 pub struct RemoveEntities {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    pub entities: Vec<i32>,
+}
+
+impl Encode for RemoveEntities {
+    fn encode(&self, encoder: &mut Encoder) {
+        encoder.write_var_int(self.entities.len().try_into().unwrap_or(i32::MAX));
+        for id in &self.entities {
+            encoder.write_var_int(*id);
+        }
+    }
+}
+impl Decode for RemoveEntities {
+    fn decode(decoder: &mut Decoder) -> decoder::Result<Self> {
+        let length = decoder.read_var_int()?;
+        let mut entities = Vec::new();
+        for _ in 0..length {
+            entities.push(decoder.read_var_int()?);
+        }
+        Ok(Self { entities })
+    }
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct RemoveEntityEffect {
@@ -681,8 +748,11 @@ pub struct LinkEntities {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SetEntityVelocity {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub entity_id: i32,
+    pub velocity_x: i16,
+    pub velocity_y: i16,
+    pub velocity_z: i16,
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SetEquipment {
@@ -786,8 +856,16 @@ pub struct PickUpItem {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct TeleportEntity {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    #[encoding(varint)]
+    pub entity_id: i32,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    #[encoding(angle)]
+    pub yaw: f32,
+    #[encoding(angle)]
+    pub pitch: f32,
+    pub on_ground: bool,
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SetTickingState {

@@ -35,7 +35,7 @@ pub unsafe extern "system" fn Java_me_caelunshun_quicproxy_jni_RustQuicContext_i
         let _guard = runtime.enter();
 
         #[cfg(feature = "ignore-server-certificates")]
-        let client_config = {
+        let mut client_config = {
             let crypto = rustls::ClientConfig::builder()
                 .with_safe_defaults()
                 .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
@@ -43,7 +43,9 @@ pub unsafe extern "system" fn Java_me_caelunshun_quicproxy_jni_RustQuicContext_i
             ClientConfig::new(Arc::new(crypto))
         };
         #[cfg(not(feature = "ignore-server-certificates"))]
-        let client_config = ClientConfig::with_native_roots();
+        let mut client_config = ClientConfig::with_native_roots();
+
+        client_config.transport_config(Arc::new(minecraft_quic_proxy::transport_config()));
 
         let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
         endpoint.set_default_client_config(client_config);

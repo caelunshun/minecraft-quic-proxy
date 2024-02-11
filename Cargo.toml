@@ -4,6 +4,7 @@ workspace = { members = [".", "macros", "jni"] }
 name = "minecraft-quic-proxy"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/caelunshun/minecraft-quic-proxy"
 
 [dependencies]
 aes = "0.8"

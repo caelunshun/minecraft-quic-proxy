@@ -1,6 +1,5 @@
 use crate::{
     entity_id::EntityId,
-    position::ChunkPosition,
     protocol::{packet, packet::state, Decode, Decoder, Encode, Encoder},
 };
 use anyhow::Context;
@@ -252,5 +251,6 @@ impl Sequence {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SequenceKey {
     Entity(EntityId),
-    Chunk(ChunkPosition),
+    /// The player entity - used for serverbound position updates.
+    ThePlayer,
 }
