@@ -8,9 +8,7 @@ use minecraft_quic_proxy::{
     client::ClientHandle,
     quinn::{ClientConfig, Endpoint},
 };
-#[cfg(feature = "ignore-server-certificates")]
-use std::sync::Arc;
-use std::{convert::identity, panic, panic::AssertUnwindSafe};
+use std::{convert::identity, panic, panic::AssertUnwindSafe, sync::Arc};
 use tokio::{runtime, runtime::Runtime};
 
 unsafe fn deref_from_long<'a, T>(long: jlong) -> &'a T {
