@@ -179,7 +179,15 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
             | Packet::ChunkBiomes(_)
             | Packet::UnloadChunk(_)
             | Packet::ChunkAndLightData(_)
-            | Packet::UpdateLight(_) => Allocation::Stream(self.chunk_stream.clone()),
+            | Packet::UpdateLight(_)
+            // need to be on this stream due to login flow order
+            | Packet::SynchronizePlayerPosition(_)
+            | Packet::SetDefaultSpawnPosition(_)
+            | Packet::SetCenterChunk(_)
+            // event 13: start waiting for chunks
+            | Packet::GameEvent(_) => {
+                Allocation::Stream(self.chunk_stream.clone())
+            }
 
             // Unreliable entity datagrams
             Packet::UpdateEntityRotation(UpdateEntityRotation { entity_id, .. })
