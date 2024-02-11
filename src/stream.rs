@@ -28,9 +28,11 @@ where
     pub async fn open(
         connection: &Connection,
         name: impl Into<Cow<'static, str>>,
+        priority: i32,
     ) -> anyhow::Result<Self> {
         let name = name.into();
         let mut stream = connection.open_uni().await?;
+        stream.set_priority(priority)?;
         let (sender, receiver) = flume::bounded::<SendPacket<Side, State>>(4);
         task::spawn(async move {
             let mut codec = OptimizedCodec::<Side, State>::new();

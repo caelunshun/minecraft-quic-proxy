@@ -1,3 +1,5 @@
+use crate::position::BlockPosition;
+
 /// A raw encoder for a Minecraft bitstream.
 #[derive(Debug)]
 pub struct Encoder<'a> {
@@ -105,6 +107,15 @@ impl<'a> Encoder<'a> {
         let x = (degrees / 360.0 * u8::MAX as f32).round() as u8;
         self.buffer.push(x);
     }
+
+    /// Writes a bit-packed block position to the stream.
+    pub fn write_block_position(&mut self, pos: BlockPosition) {
+        let BlockPosition { x, y, z } = pos;
+        let value = ((i64::from(x) & 0x3FFFFFF) << 38)
+            | ((i64::from(z) & 0x3FFFFFF) << 12)
+            | (i64::from(y) & 0xFFF);
+        self.write_i64(value);
+    }
 }
 
 /// A type that can be written to an [`Encoder`].
@@ -187,6 +198,12 @@ impl Encode for String {
 impl Encode for u128 {
     fn encode(&self, encoder: &mut Encoder) {
         encoder.write_slice(&self.to_be_bytes())
+    }
+}
+
+impl Encode for BlockPosition {
+    fn encode(&self, encoder: &mut Encoder) {
+        encoder.write_block_position(*self)
     }
 }
 

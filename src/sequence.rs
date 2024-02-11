@@ -188,7 +188,9 @@ where
         packet: &impl Encode,
         header: DatagramHeader,
     ) -> anyhow::Result<Vec<u8>> {
-        let mut buf = bincode::options().serialize(&header)?;
+        let mut buf = bincode::options()
+            .allow_trailing_bytes()
+            .serialize(&header)?;
         packet.encode(&mut Encoder::new(&mut buf));
         Ok(buf)
     }
@@ -250,7 +252,9 @@ impl Sequence {
 /// Packets with the same key are sent on the same sequence.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SequenceKey {
-    Entity(EntityId),
+    EntityPosition(EntityId),
+    EntityVelocity(EntityId),
+
     /// The player entity - used for serverbound position updates.
-    ThePlayer,
+    ThePlayerPosition,
 }

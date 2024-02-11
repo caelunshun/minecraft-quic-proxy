@@ -1,4 +1,7 @@
-use crate::protocol::{decoder, Decode, Decoder, Encode, Encoder};
+use crate::{
+    position::{BlockPosition, ChunkPosition},
+    protocol::{decoder, Decode, Decoder, Encode, Encoder},
+};
 use minecraft_quic_proxy_macros::{Decode, Encode};
 
 #[derive(Debug, Clone, Encode, Decode, strum::AsRefStr)]
@@ -311,6 +314,7 @@ pub struct BlockAction {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct BlockUpdate {
+    pub position: BlockPosition,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -421,8 +425,8 @@ pub struct Explosion {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct UnloadChunk {
-    #[encoding(length_prefix = "inferred")]
-    pub ignored_data: Vec<u8>,
+    pub chunk_z: i32,
+    pub chunk_x: i32,
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct GameEvent {
@@ -663,9 +667,20 @@ pub struct SetHeadRotation {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct UpdateSectionBlocks {
+    pub chunk_section_position: i64,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
+
+impl UpdateSectionBlocks {
+    pub fn chunk_position(&self) -> ChunkPosition {
+        ChunkPosition {
+            x: (self.chunk_section_position >> 42) as i32,
+            z: (self.chunk_section_position << 22 >> 42) as i32,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SelectAdvancementsTab {
     #[encoding(length_prefix = "inferred")]

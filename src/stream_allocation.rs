@@ -27,13 +27,15 @@
 
 use crate::{
     entity_id::EntityId,
+    position::ChunkPosition,
     protocol::{
         packet,
         packet::{
             client, server,
             server::play::{
-                SetEntityVelocity, TeleportEntity, UpdateEntityPosition,
-                UpdateEntityPositionAndRotation, UpdateEntityRotation,
+                ChunkAndLightData, SetEntityVelocity, TeleportEntity, UnloadChunk,
+                UpdateEntityPosition, UpdateEntityPositionAndRotation, UpdateEntityRotation,
+                UpdateLight,
             },
             side,
             side::{Client, Server},
@@ -42,6 +44,7 @@ use crate::{
     },
     sequence::SequenceKey,
     stream::SendStreamHandle,
+    stream_priority,
 };
 use mini_moka::sync::Cache;
 use quinn::Connection;
@@ -82,6 +85,7 @@ pub struct StreamAllocator<Side: packet::Side> {
     connection: Connection,
 
     entity_streams: Cache<EntityId, SendStreamHandle<Side, state::Play>>,
+    block_update_streams: Cache<ChunkPosition, SendStreamHandle<Side, state::Play>>,
 
     chunk_stream: SendStreamHandle<Side, state::Play>,
     chat_stream: SendStreamHandle<Side, state::Play>,
@@ -96,18 +100,42 @@ where
     Side: packet::Side + Clone,
 {
     pub async fn new(connection: &Connection) -> anyhow::Result<Self> {
-        let chunk_stream = SendStreamHandle::open(connection, "chunks").await?;
-        let chat_stream = SendStreamHandle::open(connection, "chat").await?;
-        let misc_stream = SendStreamHandle::open(connection, "misc").await?;
+        let chat_stream =
+            SendStreamHandle::open(connection, "chat", stream_priority::CHAT_STREAM).await?;
+        let misc_stream =
+            SendStreamHandle::open(connection, "misc", stream_priority::MISC_STREAM).await?;
+        let chunk_stream =
+            SendStreamHandle::open(connection, "chunks", stream_priority::DEFAULT).await?;
 
         let entity_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
+        let block_update_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
         Ok(Self {
             connection: connection.clone(),
             entity_streams,
+            block_update_streams,
             chunk_stream,
             chat_stream,
             misc_stream,
         })
+    }
+
+    async fn block_update_stream(
+        &self,
+        chunk: ChunkPosition,
+    ) -> anyhow::Result<SendStreamHandle<Side, state::Play>> {
+        match self.block_update_streams.get(&chunk) {
+            Some(stream) => Ok(stream.clone()),
+            None => {
+                let stream = SendStreamHandle::open(
+                    &self.connection,
+                    format!("{chunk:?}"),
+                    stream_priority::DEFAULT,
+                )
+                .await?;
+                self.block_update_streams.insert(chunk, stream.clone());
+                Ok(stream)
+            }
+        }
     }
 }
 
@@ -134,7 +162,12 @@ impl AllocateStream<side::Client> for StreamAllocator<side::Client> {
             }
 
             Packet::KeepAlive(_) | Packet::PingRequest(_) | Packet::Pong(_) => {
-                let new_stream = SendStreamHandle::open(&self.connection, "keepalive").await?;
+                let new_stream = SendStreamHandle::open(
+                    &self.connection,
+                    "keepalive",
+                    stream_priority::KEEPALIVE,
+                )
+                .await?;
                 Allocation::Stream(new_stream)
             }
 
@@ -142,7 +175,7 @@ impl AllocateStream<side::Client> for StreamAllocator<side::Client> {
             | Packet::SetPlayerPosition(_)
             | Packet::SetPlayerRotation(_)
             | Packet::SetPlayerPositionAndRotation(_) => {
-                Allocation::UnreliableSequence(SequenceKey::ThePlayer)
+                Allocation::UnreliableSequence(SequenceKey::ThePlayerPosition)
             }
 
             _ => Allocation::Stream(self.misc_stream.clone()),
@@ -170,30 +203,28 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
             | Packet::KeepAlive(_)
             | Packet::Ping(_)
             | Packet::PingResponse(_) => {
-                let new_stream = SendStreamHandle::open(&self.connection, "keepalive").await?;
+                let new_stream = SendStreamHandle::open(
+                    &self.connection,
+                    "keepalive",
+                    stream_priority::KEEPALIVE,
+                )
+                .await?;
                 Allocation::Stream(new_stream)
             }
 
             // Chunk stream
-            Packet::ChunkBatchStart(_)
-            | Packet::ChunkBatchFinished(_)
-            | Packet::ChunkBiomes(_)
-            | Packet::UnloadChunk(_)
+            Packet::UnloadChunk(_)
             | Packet::ChunkAndLightData(_)
             | Packet::UpdateLight(_)
-            | Packet::UpdateSectionBlocks(_)
-            | Packet::BlockUpdate(_)
-            // need to be on this stream due to login flow order
-            | Packet::SynchronizePlayerPosition(_)
-            | Packet::SetDefaultSpawnPosition(_)
-            | Packet::SetCenterChunk(_)
-            | Packet::Login(_)
-            | Packet::PlayerInfoUpdate(_)
-            | Packet::PlayerInfoRemove(_)
-            | Packet::Respawn(_)
-            // event 13: start waiting for chunks
-            | Packet::GameEvent(_) => {
-                Allocation::Stream(self.chunk_stream.clone())
+            | Packet::ChunkBatchFinished(_)
+            | Packet::ChunkBatchStart(_)
+            | Packet::ChunkBiomes(_) => Allocation::Stream(self.chunk_stream.clone()),
+
+            Packet::UpdateSectionBlocks(packet) => {
+                Allocation::Stream(self.block_update_stream(packet.chunk_position()).await?)
+            }
+            Packet::BlockUpdate(packet) => {
+                Allocation::Stream(self.block_update_stream(packet.position.chunk()).await?)
             }
 
             // Unreliable entity datagrams
@@ -203,9 +234,16 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
                 ..
             })
             | Packet::UpdateEntityPosition(UpdateEntityPosition { entity_id, .. })
-            | Packet::TeleportEntity(TeleportEntity { entity_id, .. })
-            | Packet::SetEntityVelocity(SetEntityVelocity { entity_id, .. }) => {
-                Allocation::UnreliableSequence(SequenceKey::Entity(EntityId::new(*entity_id)))
+            | Packet::TeleportEntity(TeleportEntity { entity_id, .. }) => {
+                Allocation::UnreliableSequence(SequenceKey::EntityPosition(EntityId::new(
+                    *entity_id,
+                )))
+            }
+
+            Packet::SetEntityVelocity(SetEntityVelocity { entity_id, .. }) => {
+                Allocation::UnreliableSequence(SequenceKey::EntityVelocity(EntityId::new(
+                    *entity_id,
+                )))
             }
 
             // Default case - shared stream

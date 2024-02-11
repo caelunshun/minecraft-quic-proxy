@@ -10,6 +10,7 @@ use crate::{
     sequence::SequencesHandle,
     stream::{RecvStreamHandle, SendStreamHandle},
     stream_allocation::{AllocateStream, Allocation, StreamAllocator},
+    stream_priority,
 };
 use anyhow::{bail, Context};
 use quinn::Connection;
@@ -185,7 +186,12 @@ where
     pub async fn new(connection: &Connection) -> anyhow::Result<Self> {
         Ok(Self {
             connection: connection.clone(),
-            send_stream: SendStreamHandle::open(connection, type_name::<State>()).await?,
+            send_stream: SendStreamHandle::open(
+                connection,
+                type_name::<State>(),
+                stream_priority::DEFAULT,
+            )
+            .await?,
             recv_stream: Mutex::new(None),
         })
     }

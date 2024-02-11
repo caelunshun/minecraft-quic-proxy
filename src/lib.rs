@@ -40,6 +40,7 @@ mod proxy;
 mod sequence;
 mod stream;
 mod stream_allocation;
+mod stream_priority;
 
 pub use quinn;
 use quinn::{IdleTimeout, TransportConfig, VarInt};

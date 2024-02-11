@@ -1,3 +1,4 @@
+use crate::position::BlockPosition;
 use std::{backtrace::Backtrace, convert::Infallible, num::TryFromIntError, str::Utf8Error};
 
 /// An error while decoding packets.
@@ -165,6 +166,16 @@ impl<'a> Decoder<'a> {
         Ok((result, num_read as usize))
     }
 
+    pub fn read_block_position(&mut self) -> Result<BlockPosition> {
+        let value = self.read_i64()?;
+
+        let x = (value >> 38) as i32;
+        let y = (value & 0xFFF) as i32;
+        let z = (value << 26 >> 38) as i32;
+
+        Ok(BlockPosition { x, y, z })
+    }
+
     /// Reads a string from the stream.
     pub fn read_string(&mut self) -> Result<&'a str> {
         let length = usize::try_from(self.read_var_int()?)?;
@@ -264,6 +275,12 @@ impl Decode for u128 {
     fn decode(decoder: &mut Decoder) -> Result<Self> {
         let bytes = decoder.consume::<16>()?;
         Ok(Self::from_be_bytes(bytes))
+    }
+}
+
+impl Decode for BlockPosition {
+    fn decode(decoder: &mut Decoder) -> Result<Self> {
+        decoder.read_block_position()
     }
 }
 

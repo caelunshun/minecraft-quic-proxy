@@ -44,7 +44,13 @@ pub async fn run(
     authentication_key: &AuthenticationKey,
 ) -> anyhow::Result<()> {
     loop {
-        let connection = endpoint.accept().await.context("endpoint closed")?.await?;
+        let connection = match endpoint.accept().await.context("endpoint closed")?.await {
+            Ok(conn) => conn,
+            Err(e) => {
+                tracing::warn!("Failed to accept connection: {e}");
+                continue;
+            }
+        };
 
         tracing::info!("Accepted connection from {}", connection.remote_address());
         let authentication_key = authentication_key.clone();

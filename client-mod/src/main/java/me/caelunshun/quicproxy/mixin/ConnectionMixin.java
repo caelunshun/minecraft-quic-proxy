@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import javax.crypto.Cipher;
 import java.net.InetSocketAddress;
@@ -50,6 +51,13 @@ public class ConnectionMixin implements ConnectionExt {
         if (type == ConnectionType.QUIC) {
             // No point in compressing the connection to the local QUIC client
             callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "isEncrypted", at = @At("HEAD"), cancellable = true)
+    public void quicConnectionsAreEncrypted(CallbackInfoReturnable<Boolean> callbackInfo) {
+        if (this.type == ConnectionType.QUIC) {
+            callbackInfo.setReturnValue(true);
         }
     }
 }
