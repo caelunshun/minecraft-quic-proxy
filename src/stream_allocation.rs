@@ -27,14 +27,13 @@
 
 use crate::{
     entity_id::EntityId,
-    position::ChunkPosition,
     protocol::{
         packet,
         packet::{
             client, server,
             server::play::{
-                ChunkAndLightData, SetEntityVelocity, TeleportEntity, UpdateEntityPosition,
-                UpdateEntityPositionAndRotation, UpdateEntityRotation, UpdateLight,
+                SetEntityVelocity, TeleportEntity, UpdateEntityPosition,
+                UpdateEntityPositionAndRotation, UpdateEntityRotation,
             },
             side,
             side::{Client, Server},
@@ -83,8 +82,8 @@ pub struct StreamAllocator<Side: packet::Side> {
     connection: Connection,
 
     entity_streams: Cache<EntityId, SendStreamHandle<Side, state::Play>>,
-    chunk_streams: Cache<ChunkPosition, SendStreamHandle<Side, state::Play>>,
 
+    chunk_stream: SendStreamHandle<Side, state::Play>,
     chat_stream: SendStreamHandle<Side, state::Play>,
     misc_stream: SendStreamHandle<Side, state::Play>,
 }
@@ -97,34 +96,18 @@ where
     Side: packet::Side + Clone,
 {
     pub async fn new(connection: &Connection) -> anyhow::Result<Self> {
+        let chunk_stream = SendStreamHandle::open(connection, "chunks").await?;
         let chat_stream = SendStreamHandle::open(connection, "chat").await?;
         let misc_stream = SendStreamHandle::open(connection, "misc").await?;
 
         let entity_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
-        let chunk_streams = Cache::builder().time_to_idle(STREAM_IDLE_DURATION).build();
-
         Ok(Self {
             connection: connection.clone(),
             entity_streams,
-            chunk_streams,
+            chunk_stream,
             chat_stream,
             misc_stream,
         })
-    }
-
-    async fn chunk_stream(
-        &self,
-        chunk: ChunkPosition,
-    ) -> anyhow::Result<SendStreamHandle<Side, state::Play>> {
-        match self.chunk_streams.get(&chunk) {
-            Some(stream) => Ok(stream.clone()),
-            None => {
-                let stream =
-                    SendStreamHandle::open(&self.connection, format!("chunk {chunk:?}")).await?;
-                self.chunk_streams.insert(chunk, stream.clone());
-                Ok(stream)
-            }
-        }
     }
 }
 
@@ -190,19 +173,13 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
                 Allocation::Stream(new_stream)
             }
 
-            // Stream per chunk
-            Packet::ChunkAndLightData(ChunkAndLightData {
-                chunk_x, chunk_z, ..
-            })
-            | Packet::UpdateLight(UpdateLight {
-                chunk_x, chunk_z, ..
-            }) => {
-                let chunk = ChunkPosition {
-                    x: *chunk_x,
-                    z: *chunk_z,
-                };
-                Allocation::Stream(self.chunk_stream(chunk).await?)
-            }
+            // Chunk stream
+            Packet::ChunkBatchStart(_)
+            | Packet::ChunkBatchFinished(_)
+            | Packet::ChunkBiomes(_)
+            | Packet::UnloadChunk(_)
+            | Packet::ChunkAndLightData(_)
+            | Packet::UpdateLight(_) => Allocation::Stream(self.chunk_stream.clone()),
 
             // Unreliable entity datagrams
             Packet::UpdateEntityRotation(UpdateEntityRotation { entity_id, .. })
