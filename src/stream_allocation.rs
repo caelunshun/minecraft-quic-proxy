@@ -170,13 +170,6 @@ impl AllocateStream<side::Client> for StreamAllocator<side::Client> {
                 Allocation::Stream(new_stream)
             }
 
-            Packet::SetPlayerOnGround(_)
-            | Packet::SetPlayerPosition(_)
-            | Packet::SetPlayerRotation(_)
-            | Packet::SetPlayerPositionAndRotation(_) => {
-                Allocation::UnreliableSequence(SequenceKey::ThePlayerPosition)
-            }
-
             _ => Allocation::Stream(self.misc_stream.clone()),
         };
         Ok(allocation)
