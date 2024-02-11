@@ -166,11 +166,34 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
 
             // New stream (reliable unordered)
             Packet::Particle(_)
+            | Packet::SetHealth(_)
             | Packet::KeepAlive(_)
             | Packet::Ping(_)
             | Packet::PingResponse(_) => {
                 let new_stream = SendStreamHandle::open(&self.connection, "keepalive").await?;
                 Allocation::Stream(new_stream)
+            }
+
+            // Chunk stream
+            Packet::ChunkBatchStart(_)
+            | Packet::ChunkBatchFinished(_)
+            | Packet::ChunkBiomes(_)
+            | Packet::UnloadChunk(_)
+            | Packet::ChunkAndLightData(_)
+            | Packet::UpdateLight(_)
+            | Packet::UpdateSectionBlocks(_)
+            | Packet::BlockUpdate(_)
+            // need to be on this stream due to login flow order
+            | Packet::SynchronizePlayerPosition(_)
+            | Packet::SetDefaultSpawnPosition(_)
+            | Packet::SetCenterChunk(_)
+            | Packet::Login(_)
+            | Packet::PlayerInfoUpdate(_)
+            | Packet::PlayerInfoRemove(_)
+            | Packet::Respawn(_)
+            // event 13: start waiting for chunks
+            | Packet::GameEvent(_) => {
+                Allocation::Stream(self.chunk_stream.clone())
             }
 
             // Unreliable entity datagrams
