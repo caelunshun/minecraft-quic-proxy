@@ -9,6 +9,7 @@ use crate::{
         vanilla_codec::{CompressionThreshold, EncryptionKey},
     },
     proxy::{PacketIo, Proxy, QuicPacketIo, SingleQuicPacketIo, VanillaPacketIo},
+    stream,
 };
 use anyhow::{anyhow, bail, Context};
 use argon2::{PasswordHash, PasswordVerifier};
@@ -97,7 +98,7 @@ async fn drive_connection(
     let client_connection: SingleQuicPacketIo<side::Server, state::Handshake> =
         SingleQuicPacketIo::new(&connection).await?;
 
-    let (client_connection, server_connection) = match timeout(
+    let (mut client_connection, mut server_connection) = match timeout(
         CONFIGURATION_TIMEOUT,
         configure_connection(server_connection, client_connection, &mut control_stream),
     )
@@ -107,14 +108,33 @@ async fn drive_connection(
         None => return Ok(()),
     };
 
-    Proxy::new(client_connection, server_connection)
-        .run(
-            |_| ControlFlow::Continue(()),
-            |_| ControlFlow::<()>::Continue(()),
-        )
-        .await?;
+    loop {
+        let mut proxy = Proxy::new(client_connection, server_connection);
+        proxy
+            .run(
+                |client_packet| {
+                    if let client::play::Packet::AcknowledgeConfiguration(_) = client_packet {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                },
+                |_| ControlFlow::<()>::Continue(()),
+            )
+            .await?;
 
-    Ok(())
+        (client_connection, server_connection) = proxy.into_parts();
+        control_stream
+            .acknowledge_transition_play_to_config()
+            .await?;
+        tracing::debug!("Acknowledged transition to Configuration state");
+        let (send, recv) = stream::open_bi(client_connection.connection(), "configuration").await?;
+        let config_client_connection =
+            SingleQuicPacketIo::from_streams(client_connection.connection(), send, recv);
+        let config_server_connection = server_connection.switch_state();
+        (client_connection, server_connection) =
+            do_configuration(config_client_connection, config_server_connection).await?;
+    }
 }
 
 type PlayConnections = (

@@ -33,9 +33,8 @@ use crate::{
         packet::{
             client, server,
             server::play::{
-                ChunkAndLightData, SetEntityVelocity, TeleportEntity, UnloadChunk,
-                UpdateEntityPosition, UpdateEntityPositionAndRotation, UpdateEntityRotation,
-                UpdateLight,
+                SetEntityVelocity, TeleportEntity, UpdateEntityPosition,
+                UpdateEntityPositionAndRotation, UpdateEntityRotation,
             },
             side,
             side::{Client, Server},
@@ -129,7 +128,7 @@ where
                 let stream = SendStreamHandle::open(
                     &self.connection,
                     format!("{chunk:?}"),
-                    stream_priority::DEFAULT,
+                    stream_priority::GAME_UPDATES,
                 )
                 .await?;
                 self.block_update_streams.insert(chunk, stream.clone());

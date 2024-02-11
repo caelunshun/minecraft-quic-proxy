@@ -196,6 +196,18 @@ where
         })
     }
 
+    pub fn from_streams(
+        connection: &Connection,
+        send_stream: SendStreamHandle<Side, State>,
+        recv_stream: RecvStreamHandle<Side, State>,
+    ) -> Self {
+        Self {
+            connection: connection.clone(),
+            send_stream,
+            recv_stream: Mutex::new(Some(recv_stream)),
+        }
+    }
+
     pub fn connection(&self) -> &Connection {
         &self.connection
     }
@@ -266,6 +278,10 @@ where
             receiver: QuicReceiver::new(connection.clone()),
             connection,
         })
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.connection
     }
 }
 
@@ -352,7 +368,7 @@ where
                     let mut client_packet= client_packet?;
                     let control_flow = intercept_client_packet(&mut client_packet);
 
-                    tracing::debug!("client => server: {}", client_packet.as_ref());
+                    tracing::trace!("client => server: {}", client_packet.as_ref());
                     let server = Arc::clone(&self.server);
                     self.pending_tasks.spawn_local(async move {
                         server.send_packet(client_packet).await
@@ -366,7 +382,7 @@ where
                     let mut server_packet = server_packet?;
                     let control_flow = intercept_server_packet(&mut server_packet);
 
-                    tracing::debug!("server => client: {}", server_packet.as_ref());
+                    tracing::trace!("server => client: {}", server_packet.as_ref());
                     let client = Arc::clone(&self.client);
                     self.pending_tasks.spawn_local(async move {
                        client.send_packet(server_packet).await

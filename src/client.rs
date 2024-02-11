@@ -3,8 +3,9 @@
 
 use crate::{
     control_stream,
-    protocol::packet::{client, client::handshake::NextState, side, state},
+    protocol::packet::{client, client::handshake::NextState, server, side, state},
     proxy::{PacketIo, Proxy, QuicPacketIo, SingleQuicPacketIo, VanillaPacketIo},
+    stream,
 };
 use anyhow::Context;
 use quinn::{Connection, Endpoint};
@@ -161,8 +162,8 @@ impl Client {
                 }
                 State::Configuration(config) => config.proxy_until_next_state().await?,
                 State::Play(play) => {
-                    play.proxy().await?;
-                    break;
+                    play.proxy_until_next_state(&mut self.control_stream)
+                        .await?
                 }
             };
             self.state = new_state;
@@ -350,13 +351,58 @@ struct PlayState {
 }
 
 impl PlayState {
-    pub async fn proxy(self) -> anyhow::Result<()> {
-        Proxy::new(self.client, self.gateway)
+    pub async fn proxy_until_next_state(
+        mut self,
+        control_stream: &mut control_stream::ClientSide,
+    ) -> anyhow::Result<State> {
+        let mut proxy = Proxy::new(self.client, self.gateway);
+        proxy
             .run(
-                |_| ControlFlow::<()>::Continue(()),
                 |_| ControlFlow::Continue(()),
+                |server_packet| {
+                    if let server::play::Packet::StartConfiguration(_) = server_packet {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                },
             )
             .await?;
-        Ok(())
+
+        // Wait for client to send AcknowledgeConfiguration.
+        // Ignore remaining server packets until after
+        // the gateway acknowledges the state transition.
+        // (This is needed because the client will now enter
+        // the Configuration state and fail to decode any more
+        // Play packets that were sent out-of-order.)
+        loop {
+            if let client::play::Packet::AcknowledgeConfiguration(packet) =
+                proxy.client_mut().recv_packet().await?
+            {
+                proxy
+                    .server_mut()
+                    .send_packet(client::play::Packet::AcknowledgeConfiguration(packet))
+                    .await?;
+                break;
+            }
+        }
+
+        (self.client, self.gateway) = proxy.into_parts();
+
+        tracing::debug!("Waiting for gateway to acknowledge transition into Configuration");
+        control_stream
+            .wait_for_ack_transition_play_to_config()
+            .await?;
+        tracing::debug!("Received gateway acknowledgement");
+
+        self.into_configuration().await.map(State::Configuration)
+    }
+
+    pub async fn into_configuration(self) -> anyhow::Result<ConfigurationState> {
+        let (send, recv) = stream::accept_bi(self.gateway.connection(), "configuration").await?;
+        tracing::debug!("Transition out of Play and into Configuration");
+        let gateway = SingleQuicPacketIo::from_streams(self.gateway.connection(), send, recv);
+        let client = self.client.switch_state();
+        Ok(ConfigurationState { gateway, client })
     }
 }

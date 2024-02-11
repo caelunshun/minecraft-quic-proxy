@@ -26,7 +26,11 @@ pub unsafe extern "system" fn Java_me_caelunshun_quicproxy_jni_RustQuicContext_i
     _class: JClass,
 ) -> jlong {
     wrap_with_error_handling(&mut env, |_env| {
-        tracing_subscriber::fmt::try_init().ok();
+        tracing_subscriber::fmt()
+            .with_max_level(tracing_subscriber::filter::LevelFilter::DEBUG)
+            .with_ansi(false)
+            .try_init()
+            .ok();
         std::env::set_var("RUST_BACKTRACE", "1");
 
         let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;

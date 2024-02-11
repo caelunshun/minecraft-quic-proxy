@@ -48,6 +48,9 @@ enum GatewayMessage {
     /// Sent when the gateway has received the encryption secret
     /// and has now enabled encryption for all future packets.
     AcknowledgeEnableTerminalEncryption,
+    /// Sent when the gateway has received an Acknowledge Configuration
+    /// packet and is ready to accept the configuration stream.
+    AcknowledgeTransitionPlayToConfig,
 }
 
 /// Used to send and receive `Message`s.
@@ -126,6 +129,11 @@ impl ClientSide {
         Ok(())
     }
 
+    pub async fn wait_for_ack_transition_play_to_config(&mut self) -> anyhow::Result<()> {
+        self.wait_for_ack(|msg| matches!(msg, GatewayMessage::AcknowledgeTransitionPlayToConfig))
+            .await
+    }
+
     async fn wait_for_ack(
         &mut self,
         expected_message: impl FnOnce(&GatewayMessage) -> bool,
@@ -186,6 +194,12 @@ impl GatewaySide {
     pub async fn acknowledge_terminal_encryption(&mut self) -> anyhow::Result<()> {
         self.codec
             .send_message(&GatewayMessage::AcknowledgeEnableTerminalEncryption)
+            .await
+    }
+
+    pub async fn acknowledge_transition_play_to_config(&mut self) -> anyhow::Result<()> {
+        self.codec
+            .send_message(&GatewayMessage::AcknowledgeTransitionPlayToConfig)
             .await
     }
 
