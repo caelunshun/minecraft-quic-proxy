@@ -21,6 +21,7 @@ flate2 = { version = "1", default-features = false, features = ["zlib-ng"] }
 flume = "0.11"
 fs-err = "2"
 futures = "0.3"
+mimalloc = { version = "0.1", default-features = false }
 minecraft-quic-proxy-macros = { path = "macros" }
 mini-moka = "0.10"
 once_cell = "1"

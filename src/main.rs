@@ -1,11 +1,15 @@
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
+use mimalloc::MiMalloc;
 use minecraft_quic_proxy::{gateway, gateway::AuthenticationKey, transport_config};
 use quinn::{Endpoint, ServerConfig};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+#[global_allocator]
+static ALLOCATOR: MiMalloc = MiMalloc;
 
 #[derive(Debug, Parser)]
 struct Cli {
