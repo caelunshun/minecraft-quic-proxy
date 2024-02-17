@@ -284,6 +284,8 @@ pub struct SpawnExperienceOrb {
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct EntityAnimation {
+    #[encoding(varint)]
+    pub entity_id: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -395,6 +397,8 @@ pub struct PluginMessage {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct DamageEvent {
+    #[encoding(varint)]
+    pub entity_id: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -415,6 +419,7 @@ pub struct DisguisedChatMessage {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct EntityEvent {
+    pub entity_id: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -440,6 +445,8 @@ pub struct OpenHorseScreen {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct HurtAnimation {
+    #[encoding(varint)]
+    pub entity_id: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -662,6 +669,8 @@ pub struct Respawn {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SetHeadRotation {
+    #[encoding(varint)]
+    pub entity_id: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -753,6 +762,8 @@ pub struct DisplayObjective {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SetEntityMetadata {
+    #[encoding(varint)]
+    pub entity_id: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }
@@ -904,6 +915,8 @@ pub struct UpdateAttributes {
 }
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct EntityEffect {
+    #[encoding(varint)]
+    pub entity_id: i32,
     #[encoding(length_prefix = "inferred")]
     pub ignored_data: Vec<u8>,
 }

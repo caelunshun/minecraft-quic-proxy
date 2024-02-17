@@ -32,10 +32,7 @@ use crate::{
         packet,
         packet::{
             client, server,
-            server::play::{
-                SetEntityVelocity, TeleportEntity, UpdateEntityPosition,
-                UpdateEntityPositionAndRotation, UpdateEntityRotation,
-            },
+            server::play::EntityAnimation,
             side,
             side::{Client, Server},
             state,
@@ -136,6 +133,25 @@ where
             }
         }
     }
+
+    async fn entity_stream(
+        &self,
+        entity_id: EntityId,
+    ) -> anyhow::Result<SendStreamHandle<Side, state::Play>> {
+        match self.entity_streams.get(&entity_id) {
+            Some(stream) => Ok(stream.clone()),
+            None => {
+                let stream = SendStreamHandle::open(
+                    &self.connection,
+                    "entity",
+                    stream_priority::GAME_UPDATES,
+                )
+                .await?;
+                self.entity_streams.insert(entity_id, stream.clone());
+                Ok(stream)
+            }
+        }
+    }
 }
 
 /// `StreamAllocator` implements this for both `Side = Client` and `Side = Server`
@@ -181,16 +197,33 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
         &mut self,
         packet: &server::play::Packet,
     ) -> anyhow::Result<Allocation<Server>> {
-        use server::play::Packet;
+        use server::play::*;
         let allocation = match packet {
             // Chat stream
             Packet::ChatSuggestions(_)
             | Packet::DisguisedChatMessage(_)
             | Packet::PlayerChatMessage(_)
-            | Packet::SystemChatMessage(_) => Allocation::Stream(self.chat_stream.clone()),
+            | Packet::SystemChatMessage(_)
+            | Packet::BossBar(_)
+            | Packet::ClearTitles(_)
+            | Packet::CommandSuggestions(_)
+            | Packet::DeleteMessage(_)
+            | Packet::ResetScore(_)
+            | Packet::SetActionBarText(_)
+            | Packet::DisplayObjective(_)
+            | Packet::UpdateObjectives(_)
+            | Packet::UpdateTeams(_)
+            | Packet::UpdateScore(_)
+            | Packet::SetSubtitleText(_)
+            | Packet::SetTitleText(_)
+            | Packet::SetTitleAnimationTimes(_)
+            | Packet::SetTabListHeaderAndFooter(_) => Allocation::Stream(self.chat_stream.clone()),
 
             // New stream (reliable unordered)
             Packet::Particle(_)
+            | Packet::Explosion(_)
+            | Packet::SoundEffect(_)
+            | Packet::StopSound(_)
             | Packet::SetHealth(_)
             | Packet::KeepAlive(_)
             | Packet::Ping(_)
@@ -212,11 +245,29 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
             | Packet::ChunkBatchStart(_)
             | Packet::ChunkBiomes(_) => Allocation::Stream(self.chunk_stream.clone()),
 
+            // Block update streams (ordered on chunk)
             Packet::UpdateSectionBlocks(packet) => {
                 Allocation::Stream(self.block_update_stream(packet.chunk_position()).await?)
             }
             Packet::BlockUpdate(packet) => {
                 Allocation::Stream(self.block_update_stream(packet.position.chunk()).await?)
+            }
+
+            // Entity update streams (ordered on entity ID)
+            Packet::SpawnEntity(SpawnEntity { entity_id, .. })
+            | Packet::SetEntityMetadata(SetEntityMetadata { entity_id, .. })
+            | Packet::EntityAnimation(EntityAnimation { entity_id, .. })
+            | Packet::EntityEvent(EntityEvent { entity_id, .. })
+            | Packet::HurtAnimation(HurtAnimation { entity_id, .. })
+            | Packet::SetHeadRotation(SetHeadRotation { entity_id, .. })
+            | Packet::EntityEffect(EntityEffect { entity_id, .. })
+            | Packet::DamageEvent(DamageEvent { entity_id, .. }) => {
+                Allocation::Stream(self.entity_stream(EntityId::new(*entity_id)).await?)
+            }
+            Packet::RemoveEntities(RemoveEntities { entities, .. }) if entities.len() == 1 => {
+                // TODO: cover case where entities.len() > 1, likely by splitting the packet into multiple
+                // RemoveEntities messages.
+                Allocation::Stream(self.entity_stream(EntityId::new(entities[0])).await?)
             }
 
             // Unreliable entity datagrams
