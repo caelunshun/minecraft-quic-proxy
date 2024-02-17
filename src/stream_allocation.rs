@@ -254,9 +254,7 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
             }
 
             // Entity update streams (ordered on entity ID)
-            Packet::SpawnEntity(SpawnEntity { entity_id, .. })
-            | Packet::SetEntityMetadata(SetEntityMetadata { entity_id, .. })
-            | Packet::EntityAnimation(EntityAnimation { entity_id, .. })
+            Packet::EntityAnimation(EntityAnimation { entity_id, .. })
             | Packet::EntityEvent(EntityEvent { entity_id, .. })
             | Packet::HurtAnimation(HurtAnimation { entity_id, .. })
             | Packet::SetHeadRotation(SetHeadRotation { entity_id, .. })
