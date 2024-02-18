@@ -208,16 +208,10 @@ impl AllocateStream<side::Server> for StreamAllocator<side::Server> {
             | Packet::ClearTitles(_)
             | Packet::CommandSuggestions(_)
             | Packet::DeleteMessage(_)
-            | Packet::ResetScore(_)
             | Packet::SetActionBarText(_)
-            | Packet::DisplayObjective(_)
-            | Packet::UpdateObjectives(_)
-            | Packet::UpdateTeams(_)
-            | Packet::UpdateScore(_)
             | Packet::SetSubtitleText(_)
             | Packet::SetTitleText(_)
-            | Packet::SetTitleAnimationTimes(_)
-            | Packet::SetTabListHeaderAndFooter(_) => Allocation::Stream(self.chat_stream.clone()),
+            | Packet::SetTitleAnimationTimes(_) => Allocation::Stream(self.chat_stream.clone()),
 
             // New stream (reliable unordered)
             Packet::Particle(_)
